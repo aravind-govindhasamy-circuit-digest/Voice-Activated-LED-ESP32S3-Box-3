@@ -19,3 +19,13 @@ esp_err_t app_mqtt_init(void);
  * @return esp_err_t
  */
 esp_err_t app_mqtt_publish_state(bool state);
+
+/**
+ * @brief Publish sensor data to MQTT
+ *
+ * @param temp Temperature value
+ * @param hum Humidity value
+ * @param presence Presence status
+ * @return esp_err_t
+ */
+esp_err_t app_mqtt_publish_sensor_data(float temp, float hum, bool presence);

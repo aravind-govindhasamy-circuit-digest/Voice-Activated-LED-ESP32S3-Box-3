@@ -21,6 +21,10 @@ static esp_mqtt_client_handle_t s_client = NULL;
 #define MQTT_TOPIC_SET CONFIG_EXAMPLE_MQTT_TOPIC_SET
 #define MQTT_TOPIC_STATE CONFIG_EXAMPLE_MQTT_TOPIC_STATE
 
+#define MQTT_TOPIC_TEMP CONFIG_EXAMPLE_MQTT_TOPIC_TEMP
+#define MQTT_TOPIC_HUM CONFIG_EXAMPLE_MQTT_TOPIC_HUM
+#define MQTT_TOPIC_PRESENCE CONFIG_EXAMPLE_MQTT_TOPIC_PRESENCE
+
 static void mqtt_event_handler(void *handler_args, esp_event_base_t base,
                                int32_t event_id, void *event_data) {
   ESP_LOGD(TAG, "Event dispatched from event loop base=%s, event_id=%" PRIi32,
@@ -100,6 +104,27 @@ esp_err_t app_mqtt_publish_state(bool state) {
   int msg_id =
       esp_mqtt_client_publish(s_client, MQTT_TOPIC_STATE, payload, 0, 1, 0);
   ESP_LOGI(TAG, "sent publish state successful, msg_id=%d", msg_id);
+
+  return ESP_OK;
+}
+
+esp_err_t app_mqtt_publish_sensor_data(float temp, float hum, bool presence) {
+  if (s_client == NULL) {
+    return ESP_FAIL;
+  }
+
+  ESP_LOGI(TAG, "Publishing Sensor Data: T=%.2f, H=%.2f, P=%d", temp, hum,
+           presence);
+
+  char buf[32];
+  snprintf(buf, sizeof(buf), "%.2f", temp);
+  esp_mqtt_client_publish(s_client, MQTT_TOPIC_TEMP, buf, 0, 1, 0);
+
+  snprintf(buf, sizeof(buf), "%.2f", hum);
+  esp_mqtt_client_publish(s_client, MQTT_TOPIC_HUM, buf, 0, 1, 0);
+
+  const char *presence_str = presence ? "on" : "off";
+  esp_mqtt_client_publish(s_client, MQTT_TOPIC_PRESENCE, presence_str, 0, 1, 0);
 
   return ESP_OK;
 }

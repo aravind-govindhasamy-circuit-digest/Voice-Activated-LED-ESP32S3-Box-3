@@ -12,8 +12,8 @@
 #include "bsp_board.h"
 #include "bsp_storage.h"
 
-
 #include "app_mqtt.h"
+#include "app_sensor.h"
 #include "app_sr.h"
 #include "app_wifi.h"
 #include "gui/ui_boot_animate.h"
@@ -22,8 +22,19 @@
 #include "light_ui.h"
 #include "nvs_flash.h"
 
-
 static const char *TAG = "main";
+
+static void sensor_task(void *arg) {
+  float temp, hum;
+  bool presence;
+  while (1) {
+    if (app_sensor_get_values(&temp, &hum) == ESP_OK) {
+      presence = app_sensor_get_presence();
+      app_mqtt_publish_sensor_data(temp, hum, presence);
+    }
+    vTaskDelay(pdMS_TO_TICKS(10000)); // Report every 10 seconds
+  }
+}
 
 static void after_boot(void) {
   /* Minimal main screen + SR overlay */
@@ -61,6 +72,9 @@ void app_main(void) {
 
   ESP_LOGI(TAG, "start light demo UI");
   ESP_ERROR_CHECK(light_ctrl_init());
+
+  // Sensor initialized later
+
   bsp_display_lock(0);
   boot_animate_start(after_boot);
   bsp_display_unlock();
@@ -72,8 +86,13 @@ void app_main(void) {
   vTaskDelay(pdMS_TO_TICKS(1500));
   ESP_ERROR_CHECK(app_sr_start(false));
 
+  // Initialize Sensor Dock after SR is running
+  ESP_LOGI(TAG, "Initialising Sensor Dock");
+  app_sensor_init();
+
   /* WiFi and MQTT */
   if (app_wifi_init() == ESP_OK) {
     app_mqtt_init();
+    xTaskCreate(sensor_task, "sensor_task", 4096, NULL, 5, NULL);
   }
 }

@@ -10,6 +10,7 @@ set(SRC_FILES
     "app/app_status.c"
     "app/app_wifi.c"
     "app/app_mqtt.c"
+    "app/app_sensor.c"
 
     "gui/ui_boot_animate.c"
     "gui/ui_sr.c"
