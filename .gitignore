@@ -1,0 +1,28 @@
+# ESP-IDF
+build/
+.cache/
+ccache/
+sdkconfig
+sdkconfig.old
+sdkconfig.ci.*
+dependencies.lock
+managed_components/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+.env/
+
+# IDEs/OS
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+
+# Binary outputs
+*.bin
+*.elf
+*.map
