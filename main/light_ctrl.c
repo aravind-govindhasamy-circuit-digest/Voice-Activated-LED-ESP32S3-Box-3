@@ -14,7 +14,7 @@
 #include "app_mqtt.h"
 #include "bsp_board.h"
 #include "light_state.h"
-
+#include "light_ui.h"
 
 static const char *TAG = "light_ctrl";
 static bool s_inited = false;
@@ -48,6 +48,7 @@ bool light_ctrl_get(void) { return light_state_get(); }
 
 esp_err_t light_ctrl_set(bool on) {
   ESP_LOGI(TAG, "light_ctrl_set(%s)", on ? "ON" : "OFF");
+  light_ui_set(on); // Sync UI
   ESP_RETURN_ON_ERROR(app_led_set_power(on), TAG, "set power failed");
   ESP_RETURN_ON_ERROR(light_state_set(on), TAG, "persist failed");
   ESP_LOGI(TAG, "LED HW state now: %s", app_led_get_state() ? "ON" : "OFF");

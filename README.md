@@ -1,25 +1,21 @@
-# ESP32-S3-BOX-3 LED Control Demo
+# ESP32-S3-BOX-3 Smart LED Control
 
-A minimal ESP-IDF project for ESP32-S3-BOX-3 that demonstrates LED control via touchscreen and speech recognition.
+An enhanced ESP-IDF project for ESP32-S3-BOX-3 that demonstrates remote LED control via WiFi/MQTT, touchscreen, and speech recognition.
 
-## Overview
+## Features
 
-This project provides a simple interface to control a single LED (on/off, latching) using:
-- **Touchscreen**: Full-screen image button to toggle LED state
-- **Speech Recognition**: Voice commands "turn on light" and "turn off light"
-
-The LED state is persisted across reboots using NVS (Non-Volatile Storage).
+- **Multi-Control LED**: Toggle the LED state using:
+    - **Voice Commands**: "Turn on light" and "Turn off light"
+    - **Touchscreen**: Interactive image button on the main screen.
+    - **MQTT**: Remote control via your favorite MQTT broker/dashboard.
+- **Bi-directional Sync**: Any change to the LED state (via touch, voice, or MQTT) is immediately reflected on the device screen and published back to MQTT.
+- **Connectivity Status Screen**: Access a dedicated status page (via the gear icon) to see real-time WiFi (SSID, IP) and MQTT status.
+- **Robust Connection**: Automated WiFi auto-reconnect and persistent MQTT connection management.
+- **Simplified Configuration**: Use `idf.py menuconfig` to set your credentials without touching code.
 
 ## Hardware Requirements
 
 - **ESP32-S3-BOX-3** development board
-- **LED** connected to **GPIO40** (simple on/off, no PWM)
-- Built-in LCD touchscreen (320x240)
-- Built-in microphone array for speech recognition
-
-## Features
-
-- ✅ **Boot Animation**: ESP logo animation on startup
 - ✅ **Touch Control**: Full-screen button with ON/OFF images (320x240)
 - ✅ **Speech Recognition**: English voice commands
   - "turn on light" → LED ON

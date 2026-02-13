@@ -9,8 +9,8 @@
 #include <stdio.h>
 #include <string.h>
 
-
 #include "app_mqtt.h"
+#include "app_status.h"
 #include "light_ctrl.h"
 
 static const char *TAG = "app_mqtt";
@@ -32,6 +32,7 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base,
   switch ((esp_mqtt_event_id_t)event_id) {
   case MQTT_EVENT_CONNECTED:
     ESP_LOGI(TAG, "MQTT_EVENT_CONNECTED");
+    app_status_update_mqtt(true);
     msg_id = esp_mqtt_client_subscribe(client, MQTT_TOPIC_SET, 0);
     ESP_LOGI(TAG, "sent subscribe successful, msg_id=%d", msg_id);
 
@@ -40,6 +41,7 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base,
     break;
   case MQTT_EVENT_DISCONNECTED:
     ESP_LOGI(TAG, "MQTT_EVENT_DISCONNECTED");
+    app_status_update_mqtt(false);
     break;
   case MQTT_EVENT_SUBSCRIBED:
     ESP_LOGI(TAG, "MQTT_EVENT_SUBSCRIBED, msg_id=%d", event->msg_id);

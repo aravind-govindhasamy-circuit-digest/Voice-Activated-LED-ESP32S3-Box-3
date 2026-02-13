@@ -7,6 +7,7 @@ set(SRC_FILES
     "app/app_led.c"
     "app/app_sr.c"
     "app/app_sr_handler.c"
+    "app/app_status.c"
     "app/app_wifi.c"
     "app/app_mqtt.c"
 

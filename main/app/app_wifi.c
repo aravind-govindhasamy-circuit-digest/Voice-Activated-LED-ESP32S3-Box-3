@@ -1,3 +1,4 @@
+#include "app_status.h"
 #include "esp_event.h"
 #include "esp_log.h"
 #include "esp_system.h"
@@ -8,7 +9,6 @@
 #include "nvs_flash.h"
 #include "sdkconfig.h" // Added this line
 #include <string.h>
-
 
 #include "lwip/err.h"
 #include "lwip/sys.h"
@@ -23,7 +23,6 @@
 #define WIFI_FAIL_BIT BIT1
 
 static const char *TAG = "app_wifi";
-
 static int s_retry_num = 0;
 static EventGroupHandle_t s_wifi_event_group;
 
@@ -41,16 +40,15 @@ static void event_handler(void *arg, esp_event_base_t event_base,
     esp_wifi_connect();
   } else if (event_base == WIFI_EVENT &&
              event_id == WIFI_EVENT_STA_DISCONNECTED) {
-    if (s_retry_num < DEFAULT_MAXIMUM_RETRY) {
-      esp_wifi_connect();
-      s_retry_num++;
-      ESP_LOGI(TAG, "retry to connect to the AP");
-    } else {
-      xEventGroupSetBits(s_wifi_event_group, WIFI_FAIL_BIT);
-    }
-    ESP_LOGI(TAG, "connect to the AP fail");
+    app_status_update_wifi(NULL, NULL, false);
+    esp_wifi_connect();
+    s_retry_num++;
+    ESP_LOGI(TAG, "retry to connect to the AP (%d)", s_retry_num);
   } else if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) {
     ip_event_got_ip_t *event = (ip_event_got_ip_t *)event_data;
+    char ip_str[16];
+    esp_ip4addr_ntoa(&event->ip_info.ip, ip_str, sizeof(ip_str));
+    app_status_update_wifi(CONFIG_EXAMPLE_WIFI_SSID, ip_str, true);
     ESP_LOGI(TAG, "got ip:" IPSTR, IP2STR(&event->ip_info.ip));
     s_retry_num = 0;
     xEventGroupSetBits(s_wifi_event_group, WIFI_CONNECTED_BIT);
