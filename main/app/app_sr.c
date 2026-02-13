@@ -4,6 +4,13 @@
  * SPDX-License-Identifier: Unlicense OR CC0-1.0
  */
 
+#include <stdbool.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/queue.h>
+#include <sys/time.h>
+
 #include "app_sr.h"
 #include "esp_check.h"
 #include "esp_err.h"
@@ -13,12 +20,6 @@
 #include "freertos/event_groups.h"
 #include "freertos/queue.h"
 #include "freertos/task.h"
-#include <stdbool.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <sys/queue.h>
-#include <sys/time.h>
 
 #include "app_sr_handler.h"
 #include "bsp_board.h"
@@ -33,11 +34,12 @@
 #include "gui/ui_sr.h"
 #include "model_path.h"
 
-
 static const char *TAG = "app_sr";
 
-/* Define the head structure for the command list using the struct tag */
-SLIST_HEAD(sr_cmd_list_t, sr_cmd_t);
+/* Manual simple linked list for commands to avoid SLIST macro lint issues */
+typedef struct {
+  sr_cmd_t *head;
+} sr_cmd_list_t;
 
 typedef struct {
   sr_language_t lang;
@@ -48,8 +50,8 @@ typedef struct {
   esp_afe_sr_data_t *afe_data;
   int16_t *afe_in_buffer;
   int16_t *afe_out_buffer;
-  struct sr_cmd_list_t cmd_list;
-  uint16_t cmd_num; /* Changed to uint16_t to match comparison */
+  sr_cmd_list_t cmd_list;
+  uint16_t cmd_num;
   TaskHandle_t feed_task;
   TaskHandle_t detect_task;
   TaskHandle_t handle_task;
@@ -84,7 +86,7 @@ static void audio_feed_task(void *arg) {
   esp_afe_sr_data_t *afe_data = (esp_afe_sr_data_t *)arg;
   int audio_chunksize = afe_handle->get_feed_chunksize(afe_data);
   int feed_channel = 3;
-  ESP_LOGI(TAG, "audio_chunksize=%d, feed_channel=%d", audio_chunksize,
+  ESP_LOGI(TAG, "audio_feed_task: chunksize=%d, channel=%d", audio_chunksize,
            feed_channel);
 
   /* Allocate audio buffer and check for result */
@@ -95,6 +97,10 @@ static void audio_feed_task(void *arg) {
     esp_system_abort("No mem for audio buffer");
   }
   g_sr_data->afe_in_buffer = audio_buffer;
+
+#if CONFIG_ESP_TASK_WDT_EN
+  esp_task_wdt_add(NULL);
+#endif
 
   while (true) {
     if (NEED_DELETE && xEventGroupGetBits(g_sr_data->event_group)) {
@@ -109,6 +115,10 @@ static void audio_feed_task(void *arg) {
 
     /* Feed audio data to AFE for processing */
     afe_handle->feed(afe_data, audio_buffer);
+
+#if CONFIG_ESP_TASK_WDT_EN
+    esp_task_wdt_reset();
+#endif
 
     /* Write recorded data to SD card if enabled */
     if (g_sr_data->b_record_en && g_sr_data->fp) {
@@ -129,6 +139,10 @@ static void audio_detect_task(void *arg) {
   assert(buff);
   g_sr_data->afe_out_buffer = buff;
 
+#if CONFIG_ESP_TASK_WDT_EN
+  esp_task_wdt_add(NULL);
+#endif
+
   while (true) {
     if (NEED_DELETE && xEventGroupGetBits(g_sr_data->event_group)) {
       xEventGroupSetBits(g_sr_data->event_group, DETECT_DELETED);
@@ -137,9 +151,18 @@ static void audio_detect_task(void *arg) {
 
     afe_fetch_result_t *res = afe_handle->fetch(afe_data);
     if (!res || res->ret_value == ESP_FAIL) {
-      ESP_LOGW(TAG, "AFE fetch error");
+      ESP_LOGW(TAG, "AFE fetch error or no data");
+      vTaskDelay(pdMS_TO_TICKS(10));
       continue;
     }
+
+#if CONFIG_ESP_TASK_WDT_EN
+    esp_task_wdt_reset();
+#endif
+
+    /* removed vTaskDelay(1) here to improve throughput and prevent rb_out slow
+       errors. fetch() blocks implicitly until audio is ready, providing
+       sufficient yield. */
 
     if (res->wakeup_state == WAKENET_DETECTED) {
       ESP_LOGI(TAG, "Wakeup detected");
@@ -168,6 +191,13 @@ static void audio_detect_task(void *arg) {
             .wakenet_mode = WAKENET_NO_DETECT,
             .state = mn_state,
             .command_id = mn_res->command_id[0],
+        };
+        xQueueSend(g_sr_data->result_que, &result, 0);
+      } else if (mn_state == ESP_MN_STATE_TIMEOUT) {
+        sr_result_t result = {
+            .wakenet_mode = WAKENET_NO_DETECT,
+            .state = mn_state,
+            .command_id = 0,
         };
         xQueueSend(g_sr_data->result_que, &result, 0);
       }
@@ -224,14 +254,15 @@ esp_err_t app_sr_start(bool record_en) {
   ESP_GOTO_ON_FALSE(NULL != g_sr_data->event_group, ESP_ERR_NO_MEM, err, TAG,
                     "Failed create event_group");
 
-  SLIST_INIT(&g_sr_data->cmd_list);
+  g_sr_data->cmd_list.head = NULL;
 
   /* Create file if record to SD card enabled*/
   g_sr_data->b_record_en = record_en;
   if (record_en) {
     char file_name[32];
     for (size_t i = 0; i < 100; i++) {
-      sprintf(file_name, "/sdcard/Record_%02d.pcm", i);
+      snprintf(file_name, sizeof(file_name), "/sdcard/Record_%02u.pcm",
+               (unsigned int)i);
       g_sr_data->fp = fopen(file_name, "r");
       if (NULL == g_sr_data->fp) {
         break;
@@ -252,13 +283,18 @@ esp_err_t app_sr_start(bool record_en) {
 
   afe_config.wakenet_model_name =
       esp_srmodel_filter(models, ESP_WN_PREFIX, NULL);
-  afe_config.aec_init = true;
-  /* Adjusting gain for improved hearing capability */
+  afe_config.aec_init = false;
   afe_config.voice_communication_agc_init = true;
-  afe_config.voice_communication_agc_gain = 20;
+  /* Reduced gain to 12.
+     Higher values like 25 cause clipping during tones (when AEC is off).
+     12-15 is typically the sweet spot for clean S3-BOX recognition. */
+  afe_config.voice_communication_agc_gain = 12;
 
+  /* Increased ringbuffer size to 150 to handle longer I2S contentions */
+  afe_config.afe_ringbuf_size = 150;
   afe_config.agc_mode = AFE_MN_PEAK_AGC_MODE_2;
-  afe_config.voice_communication_init = false;
+  /* Enabled voice processing for better signal quality */
+  afe_config.voice_communication_init = true;
   afe_config.wakenet_init = true;
 
   esp_afe_sr_data_t *afe_data = afe_handle->create_from_config(&afe_config);
@@ -272,22 +308,29 @@ esp_err_t app_sr_start(bool record_en) {
   ESP_GOTO_ON_FALSE(ESP_OK == ret, ESP_FAIL, err, TAG,
                     "Failed to set language");
 
+  /* Task Affinities & Priorities:
+     Feed (Core 0, Prio 12): Handles I2S DMA and AFE Pre-processing (heavy).
+     Detect (Core 1, Prio 15): Handles MultiNet detection (heavy math). High
+     throughput core. Handler (Core 0, Prio 5): Processes commands. Core 0 has
+     less SR math load. IMPORTANT: Handler task must NOT be registered with Task
+     WDT as it blocks indefinitely on queue. */
+
   ret_val =
       xTaskCreatePinnedToCore(&audio_feed_task, "Feed Task", 4 * 1024,
-                              (void *)afe_data, 5, &g_sr_data->feed_task, 0);
+                              (void *)afe_data, 12, &g_sr_data->feed_task, 0);
   ESP_GOTO_ON_FALSE(pdPASS == ret_val, ESP_FAIL, err, TAG,
                     "Failed create audio feed task");
 
   ret_val =
       xTaskCreatePinnedToCore(&audio_detect_task, "Detect Task", 8 * 1024,
-                              (void *)afe_data, 5, &g_sr_data->detect_task, 1);
+                              (void *)afe_data, 15, &g_sr_data->detect_task, 1);
   ESP_GOTO_ON_FALSE(pdPASS == ret_val, ESP_FAIL, err, TAG,
                     "Failed create audio detect task");
 
   /* sr_handler_task is implemented in app_sr_handler.c */
-  ret_val = xTaskCreatePinnedToCore(&sr_handler_task, "SR Handler Task",
-                                    6 * 1024, NULL, configMAX_PRIORITIES - 1,
-                                    &g_sr_data->handle_task, 0);
+  ret_val =
+      xTaskCreatePinnedToCore(&sr_handler_task, "SR Handler Task", 6 * 1024,
+                              NULL, 5, &g_sr_data->handle_task, 0);
   ESP_GOTO_ON_FALSE(pdPASS == ret_val, ESP_FAIL, err, TAG,
                     "Failed create audio handler task");
 
@@ -302,14 +345,8 @@ esp_err_t app_sr_stop(void) {
     return ESP_OK;
   }
 
-  /**
-   * Waiting for all task stopped
-   * TODO: A task creation failure cannot be handled correctly now
-   * */
   xEventGroupSetBits(g_sr_data->event_group, NEED_DELETE);
-  xEventGroupWaitBits(g_sr_data->event_group,
-                      NEED_DELETE | FEED_DELETED | DETECT_DELETED, 1, 1,
-                      portMAX_DELAY / 10);
+  vTaskDelay(pdMS_TO_TICKS(100));
 
   if (g_sr_data->result_que) {
     vQueueDelete(g_sr_data->result_que);
@@ -334,12 +371,13 @@ esp_err_t app_sr_stop(void) {
     g_sr_data->afe_handle->destroy(g_sr_data->afe_data);
   }
 
-  sr_cmd_t *it;
-  while (!SLIST_EMPTY(&g_sr_data->cmd_list)) {
-    it = SLIST_FIRST(&g_sr_data->cmd_list);
-    SLIST_REMOVE_HEAD(&g_sr_data->cmd_list, next);
+  sr_cmd_t *it = g_sr_data->cmd_list.head;
+  while (it) {
+    sr_cmd_t *next = (sr_cmd_t *)it->next.sle_next;
     heap_caps_free(it);
+    it = next;
   }
+  g_sr_data->cmd_list.head = NULL;
 
   if (g_sr_data->afe_in_buffer) {
     heap_caps_free(g_sr_data->afe_in_buffer);
@@ -369,7 +407,7 @@ esp_err_t app_sr_add_cmd(const sr_cmd_t *cmd) {
                       "pointer of cmd is invalid");
   ESP_RETURN_ON_FALSE(cmd->lang == g_sr_data->lang, ESP_ERR_INVALID_ARG, TAG,
                       "cmd lang error");
-  ESP_RETURN_ON_FALSE(ESP_MN_MAX_PHRASE_NUM >= g_sr_data->cmd_num,
+  ESP_RETURN_ON_FALSE((uint16_t)ESP_MN_MAX_PHRASE_NUM >= g_sr_data->cmd_num,
                       ESP_ERR_INVALID_STATE, TAG, "cmd is full");
 
   sr_cmd_t *item = (sr_cmd_t *)heap_caps_calloc(
@@ -378,20 +416,9 @@ esp_err_t app_sr_add_cmd(const sr_cmd_t *cmd) {
                       "memory for sr cmd is not enough");
   memcpy(item, cmd, sizeof(sr_cmd_t));
 
-#if 1 // insert after
-  sr_cmd_t *last = SLIST_FIRST(&g_sr_data->cmd_list);
-  if (last == NULL) {
-    SLIST_INSERT_HEAD(&g_sr_data->cmd_list, item, next);
-  } else {
-    sr_cmd_t *it;
-    while ((it = SLIST_NEXT(last, next)) != NULL) {
-      last = it;
-    }
-    SLIST_INSERT_AFTER(last, item, next);
-  }
-#else // insert head
-  SLIST_INSERT_HEAD(&g_sr_data->cmd_list, item, next);
-#endif
+  /* Manual SLIST insert head */
+  item->next.sle_next = (struct sr_cmd_t *)g_sr_data->cmd_list.head;
+  g_sr_data->cmd_list.head = item;
 
   if (strstr(g_sr_data->mn_name, "mn6_en")) {
     esp_mn_commands_add(g_sr_data->cmd_num, (char *)cmd->str);
@@ -412,18 +439,23 @@ esp_err_t app_sr_modify_cmd(uint32_t id, const sr_cmd_t *cmd) {
   ESP_RETURN_ON_FALSE(cmd->lang == g_sr_data->lang, ESP_ERR_INVALID_ARG, TAG,
                       "cmd lang error");
 
-  sr_cmd_t *it;
-  SLIST_FOREACH(it, &g_sr_data->cmd_list, next) {
+  sr_cmd_t *it = g_sr_data->cmd_list.head;
+  while (it) {
     if (it->id == id) {
-      ESP_LOGI(TAG, "modify cmd [%d] from %s to %s", id, it->str, cmd->str);
+      ESP_LOGI(TAG, "modify cmd [%d] from %s to %s", (int)id, it->str,
+               cmd->str);
       if (strstr(g_sr_data->mn_name, "mn6_en")) {
         esp_mn_commands_modify(it->str, (char *)cmd->str);
       } else {
         esp_mn_commands_modify(it->phoneme, (char *)cmd->phoneme);
       }
+      /* Keep the links when copying */
+      struct sr_cmd_t *saved_next = (struct sr_cmd_t *)it->next.sle_next;
       memcpy(it, cmd, sizeof(sr_cmd_t));
+      it->next.sle_next = saved_next;
       break;
     }
+    it = (sr_cmd_t *)it->next.sle_next;
   }
 
   return ESP_OK;
@@ -435,29 +467,38 @@ esp_err_t app_sr_remove_cmd(uint32_t id) {
   ESP_RETURN_ON_FALSE(id < g_sr_data->cmd_num, ESP_ERR_INVALID_ARG, TAG,
                       "cmd id out of range");
 
-  sr_cmd_t *it;
-  SLIST_FOREACH(it, &g_sr_data->cmd_list, next) {
+  sr_cmd_t *it = g_sr_data->cmd_list.head;
+  sr_cmd_t *prev = NULL;
+  while (it) {
     if (it->id == id) {
-      SLIST_REMOVE(&g_sr_data->cmd_list, it, sr_cmd_t, next);
+      if (prev == NULL) {
+        g_sr_data->cmd_list.head = (sr_cmd_t *)it->next.sle_next;
+      } else {
+        prev->next.sle_next = it->next.sle_next;
+      }
       esp_mn_commands_remove((char *)it->str);
       heap_caps_free(it);
       break;
     }
+    prev = it;
+    it = (sr_cmd_t *)it->next.sle_next;
   }
 
   return ESP_OK;
 }
 
 esp_err_t app_sr_remove_all_cmd(void) {
-  ESP_RETURN_ON_FALSE(NULL != g_sr_data, ESP_ERR_INVALID_STATE, TAG,
-                      "SR is not running");
-
-  sr_cmd_t *it;
-  while (!SLIST_EMPTY(&g_sr_data->cmd_list)) {
-    it = SLIST_FIRST(&g_sr_data->cmd_list);
-    SLIST_REMOVE_HEAD(&g_sr_data->cmd_list, next);
-    heap_caps_free(it);
+  if (g_sr_data == NULL) {
+    return ESP_OK;
   }
+
+  sr_cmd_t *it = g_sr_data->cmd_list.head;
+  while (it) {
+    sr_cmd_t *next = (sr_cmd_t *)it->next.sle_next;
+    heap_caps_free(it);
+    it = next;
+  }
+  g_sr_data->cmd_list.head = NULL;
   esp_mn_commands_clear();
   g_sr_data->cmd_num = 0;
   return ESP_OK;
@@ -484,11 +525,12 @@ const sr_cmd_t *app_sr_get_cmd_from_id(uint32_t id) {
   ESP_RETURN_ON_FALSE(id < g_sr_data->cmd_num, NULL, TAG,
                       "cmd id out of range");
 
-  sr_cmd_t *it;
-  SLIST_FOREACH(it, &g_sr_data->cmd_list, next) {
+  sr_cmd_t *it = g_sr_data->cmd_list.head;
+  while (it) {
     if (it->id == id) {
-      return it;
+      return (const sr_cmd_t *)it;
     }
+    it = (sr_cmd_t *)it->next.sle_next;
   }
 
   return NULL;
@@ -500,14 +542,15 @@ uint8_t app_sr_search_cmd_from_user_cmd(sr_user_cmd_t user_cmd,
   ESP_RETURN_ON_FALSE(id_list != NULL, 0, TAG, "id_list is NULL");
 
   uint8_t count = 0;
-  sr_cmd_t *it;
-  SLIST_FOREACH(it, &g_sr_data->cmd_list, next) {
+  sr_cmd_t *it = g_sr_data->cmd_list.head;
+  while (it) {
     if (it->cmd == user_cmd) {
-      id_list[count++] = it->id;
+      id_list[count++] = (uint8_t)it->id;
       if (count >= max_len) {
         break;
       }
     }
+    it = (sr_cmd_t *)it->next.sle_next;
   }
 
   return count;
@@ -519,14 +562,15 @@ uint8_t app_sr_search_cmd_from_phoneme(const char *phoneme, uint8_t *id_list,
   ESP_RETURN_ON_FALSE(id_list != NULL, 0, TAG, "id_list is NULL");
 
   uint8_t count = 0;
-  sr_cmd_t *it;
-  SLIST_FOREACH(it, &g_sr_data->cmd_list, next) {
+  sr_cmd_t *it = g_sr_data->cmd_list.head;
+  while (it) {
     if (strcmp(it->phoneme, phoneme) == 0) {
-      id_list[count++] = it->id;
+      id_list[count++] = (uint8_t)it->id;
       if (count >= max_len) {
         break;
       }
     }
+    it = (sr_cmd_t *)it->next.sle_next;
   }
 
   return count;

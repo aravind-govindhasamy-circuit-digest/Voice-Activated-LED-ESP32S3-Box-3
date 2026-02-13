@@ -1,7 +1,6 @@
 /*
  * Light control: binds persisted state to the board LED implementation.
  *
- * For ESP32-S3-BOX-3 in this repo, we drive a single GPIO LED (GPIO40) using
  * the simple `app_led_*` API from app_led.c.
  */
 
@@ -23,7 +22,7 @@ static esp_err_t init_default_led_hw(void) {
   const board_res_desc_t *brd = bsp_board_get_description();
   ESP_RETURN_ON_FALSE(brd, ESP_ERR_INVALID_STATE, TAG, "board desc not ready");
 
-  /* Single-LED mode; LED is hard-wired to GPIO40 in app_led.c */
+  /* Single-LED mode; LED is hard-wired to GPIO39 in app_led.c */
   return app_led_init();
 }
 

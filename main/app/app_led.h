@@ -13,7 +13,7 @@
 extern "C" {
 #endif
 
-/* Single-LED API: simple on/off on GPIO40. */
+/* Single-LED API: simple on/off on GPIO39. */
 esp_err_t app_led_init(void);
 esp_err_t app_led_deinit(void);
 esp_err_t app_led_set_power(bool power);

@@ -15,7 +15,7 @@ static SemaphoreHandle_t i2c_mux = NULL;
 // Docker I2C Bus (ESP32-S3-BOX-3 Sensor Dock)
 #define DOCK_I2C_SDA 41
 #define DOCK_I2C_SCL 40
-#define DOCK_I2C_NUM I2C_NUM_1
+#define DOCK_I2C_NUM I2C_NUM_0
 
 // Presence Sensor
 #define PRESENCE_GPIO 21
@@ -64,17 +64,19 @@ esp_err_t app_sensor_init(void) {
   };
 
   // Clean up if already installed (safety for re-init)
-  i2c_driver_delete(DOCK_I2C_NUM);
+  // Check if I2C_NUM_1 is already occupied
+  if (i2c_driver_install(DOCK_I2C_NUM, conf.mode, 0, 0, 0) == ESP_OK) {
+    ESP_LOGI(TAG, "I2C driver installed successfully");
+  } else {
+    ESP_LOGW(TAG, "I2C driver already installed or failed");
+  }
 
   esp_err_t err = i2c_param_config(DOCK_I2C_NUM, &conf);
   if (err != ESP_OK)
     ESP_LOGE(TAG, "I2C param config failed: %s", esp_err_to_name(err));
 
-  err = i2c_driver_install(DOCK_I2C_NUM, conf.mode, 0, 0, 0);
-  if (err != ESP_OK)
-    ESP_LOGE(TAG, "I2C driver install failed: %s", esp_err_to_name(err));
-
-  ESP_LOGI(TAG, "✅ Sensor Dock Bus Initialized (I2C_NUM_1) on Pins 41/40");
+  ESP_LOGI(TAG, "✅ Sensor Dock Bus Initialized (I2C_NUM_%d) on Pins 41/40",
+           DOCK_I2C_NUM);
 
   // Delay to let the bus settle before probing
   vTaskDelay(pdMS_TO_TICKS(100));
