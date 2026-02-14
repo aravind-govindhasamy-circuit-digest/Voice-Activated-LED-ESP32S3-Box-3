@@ -10,7 +10,6 @@
 #include "esp_check.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
-#include "esp_task_wdt.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
@@ -167,7 +166,9 @@ void sr_handler_task(void *pvParam) {
 
   while (true) {
     sr_result_t result;
-    app_sr_get_result(&result, portMAX_DELAY);
+    if (app_sr_get_result(&result, portMAX_DELAY) != ESP_OK) {
+      continue;
+    }
 
     if (result.wakenet_mode == WAKENET_DETECTED) {
       sr_anim_start();

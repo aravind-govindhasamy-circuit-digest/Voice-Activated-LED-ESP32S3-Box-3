@@ -16,6 +16,7 @@
 #include "app/fan_ctrl.h"
 #include "app_mqtt.h"
 #include "app_sensor.h"
+#include "app_status.h"
 #include "app_sr.h"
 #include "app_wifi.h"
 #include "fan_ui.h"
@@ -38,6 +39,7 @@ static void sensor_task(void *arg) {
   while (1) {
     if (app_sensor_get_values(&temp, &hum) == ESP_OK) {
       presence = app_sensor_get_presence();
+      app_status_update_sensor(temp, hum, presence);
       uint32_t now = xTaskGetTickCount();
 
       // Check for significant changes
@@ -69,6 +71,7 @@ static void after_boot(void) {
   /* Minimal main screen */
   ESP_ERROR_CHECK(light_ui_start());
   ESP_ERROR_CHECK(fan_ui_start());
+  fan_ui_update(fan_ctrl_get_power(), fan_ctrl_get_speed());
   ui_sr_anim_init();
 }
 
@@ -110,10 +113,11 @@ void app_main(void) {
   boot_animate_start(after_boot);
   bsp_display_unlock();
 
-  /* Increase Task WDT timeout to 15s to handle heavy Multinet processing */
+  /* SR detect can saturate one core during DSP windows; monitor core0 idle and
+   * rely on per-task WDT resets for SR tasks. */
   esp_task_wdt_config_t wdt_config = {
-      .timeout_ms = 15000,
-      .idle_core_mask = (1 << portNUM_PROCESSORS) - 1,
+      .timeout_ms = 20000,
+      .idle_core_mask = (1U << 0),
       .trigger_panic = true,
   };
   esp_task_wdt_reconfigure(&wdt_config);

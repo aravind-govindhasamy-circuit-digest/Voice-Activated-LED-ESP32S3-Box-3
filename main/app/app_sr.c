@@ -16,6 +16,7 @@
 #include "esp_check.h"
 #include "esp_err.h"
 #include "esp_log.h"
+#include "esp_system.h"
 #include "esp_task_wdt.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/event_groups.h"
@@ -67,10 +68,35 @@ static srmodel_list_t *models = NULL;
 
 static sr_data_t *g_sr_data = NULL;
 
-#define I2S_CHANNEL_NUM (2)
 #define NEED_DELETE BIT0
 #define FEED_DELETED BIT1
 #define DETECT_DELETED BIT2
+
+#define SR_RESULT_QUEUE_LEN 8
+#define SR_FEED_TASK_CORE 0
+#define SR_DETECT_TASK_CORE 1
+#define SR_HANDLE_TASK_CORE 0
+#define SR_FEED_TASK_PRIO 11
+#define SR_DETECT_TASK_PRIO 12
+#define SR_HANDLE_TASK_PRIO 5
+#define SR_STOP_WAIT_MS 1500
+
+static bool sr_should_stop(void) {
+  return (g_sr_data != NULL) && (g_sr_data->event_group != NULL) &&
+         ((xEventGroupGetBits(g_sr_data->event_group) & NEED_DELETE) != 0);
+}
+
+static void sr_result_queue_push(const sr_result_t *result) {
+  if ((g_sr_data == NULL) || (g_sr_data->result_que == NULL) || (result == NULL)) {
+    return;
+  }
+
+  if (xQueueSend(g_sr_data->result_que, result, 0) != pdTRUE) {
+    sr_result_t dropped;
+    (void)xQueueReceive(g_sr_data->result_que, &dropped, 0);
+    (void)xQueueSend(g_sr_data->result_que, result, 0);
+  }
+}
 
 /**
  * @brief all default commands
@@ -109,6 +135,7 @@ static void audio_feed_task(void *arg) {
   esp_afe_sr_data_t *afe_data = (esp_afe_sr_data_t *)arg;
   int audio_chunksize = afe_handle->get_feed_chunksize(afe_data);
   int feed_channel = 3;
+  size_t frame_bytes = (size_t)audio_chunksize * sizeof(int16_t) * feed_channel;
   ESP_LOGI(TAG, "audio_feed_task: chunksize=%d, channel=%d", audio_chunksize,
            feed_channel);
 
@@ -125,21 +152,28 @@ static void audio_feed_task(void *arg) {
   esp_task_wdt_add(NULL);
 #endif
 
-  while (true) {
-    if (NEED_DELETE && xEventGroupGetBits(g_sr_data->event_group)) {
-      xEventGroupSetBits(g_sr_data->event_group, FEED_DELETED);
-      vTaskDelete(NULL);
-    }
+  while (!sr_should_stop()) {
+    esp_err_t read_ret = bsp_i2s_read((char *)audio_buffer, frame_bytes, &bytes_read,
+                                      pdMS_TO_TICKS(100));
+    if (read_ret != ESP_OK || bytes_read != frame_bytes) {
+      static uint32_t short_read_cnt = 0;
+      if ((short_read_cnt++ % 20U) == 0U) {
+        ESP_LOGW(TAG, "i2s read mismatch ret=%s bytes=%u/%u",
+                 esp_err_to_name(read_ret), (unsigned)bytes_read,
+                 (unsigned)frame_bytes);
+      }
 
-    /* Read audio data from I2S bus */
-    bsp_i2s_read((char *)audio_buffer,
-                 audio_chunksize * sizeof(int16_t) * feed_channel, &bytes_read,
-                 portMAX_DELAY);
+      vTaskDelay(pdMS_TO_TICKS(1));
+#if CONFIG_ESP_TASK_WDT_EN
+      esp_task_wdt_reset();
+#endif
+      continue;
+    }
 
     /* Zero out buffer if audio is playing to prevent feedback loop (ghost
      * triggers) */
     if (sr_echo_is_playing()) {
-      memset(audio_buffer, 0, audio_chunksize * sizeof(int16_t) * feed_channel);
+      memset(audio_buffer, 0, frame_bytes);
     }
 
     /* Feed audio data to AFE for processing */
@@ -150,7 +184,7 @@ static void audio_feed_task(void *arg) {
     if (rms_count++ % 30 == 0) {
       float rms = 0;
       for (int i = 0; i < audio_chunksize; i++) {
-        float sample = (float)audio_buffer[i * 3];
+        float sample = (float)audio_buffer[i * feed_channel];
         rms += sample * sample;
       }
       rms = sqrtf(rms / audio_chunksize);
@@ -171,7 +205,17 @@ static void audio_feed_task(void *arg) {
     */
   }
 
+  if (g_sr_data && g_sr_data->event_group) {
+    xEventGroupSetBits(g_sr_data->event_group, FEED_DELETED);
+  }
+#if CONFIG_ESP_TASK_WDT_EN
+  esp_task_wdt_delete(NULL);
+#endif
+
   heap_caps_free(audio_buffer);
+  if (g_sr_data) {
+    g_sr_data->afe_in_buffer = NULL;
+  }
   vTaskDelete(NULL);
 }
 
@@ -179,50 +223,39 @@ static bool manul_detect_flag = false;
 
 static void audio_detect_task(void *arg) {
   esp_afe_sr_data_t *afe_data = (esp_afe_sr_data_t *)arg;
-  int audio_chunksize = afe_handle->get_fetch_chunksize(afe_data);
-  int16_t *buff = heap_caps_malloc(audio_chunksize * sizeof(int16_t),
-                                   MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
-  assert(buff);
-  g_sr_data->afe_out_buffer = buff;
+  bool wait_for_command = false;
+  uint32_t loop_cnt = 0;
 
 #if CONFIG_ESP_TASK_WDT_EN
   esp_task_wdt_add(NULL);
 #endif
 
-  while (true) {
-    if (NEED_DELETE && xEventGroupGetBits(g_sr_data->event_group)) {
-      xEventGroupSetBits(g_sr_data->event_group, DETECT_DELETED);
-      vTaskDelete(NULL);
-    }
+  while (!sr_should_stop()) {
 
     afe_fetch_result_t *res = afe_handle->fetch(afe_data);
     if (!res || res->ret_value == ESP_FAIL) {
       ESP_LOGW(TAG, "AFE fetch error or no data");
-      vTaskDelay(pdMS_TO_TICKS(10));
+      vTaskDelay(pdMS_TO_TICKS(1));
+#if CONFIG_ESP_TASK_WDT_EN
+      esp_task_wdt_reset();
+#endif
       continue;
     }
-
-#if CONFIG_ESP_TASK_WDT_EN
-    esp_task_wdt_reset();
-#endif
-
-    /* removed vTaskDelay(1) here to improve throughput and prevent rb_out slow
-       errors. fetch() blocks implicitly until audio is ready, providing
-       sufficient yield. */
 
     if (res->wakeup_state == WAKENET_DETECTED || manul_detect_flag) {
       ESP_LOGI(TAG, "Wakeup detected%s (WakeID: %d)",
                manul_detect_flag ? " (Manual)" : "", res->wake_word_index);
       manul_detect_flag = false;
+      wait_for_command = true;
       sr_result_t result = {
           .wakenet_mode = WAKENET_DETECTED,
           .state = ESP_MN_STATE_DETECTING,
           .command_id = 0,
       };
-      xQueueSend(g_sr_data->result_que, &result, 0);
+      sr_result_queue_push(&result);
     }
 
-    if (g_sr_data->model_data) {
+    if (wait_for_command && g_sr_data->model_data) {
       esp_mn_state_t mn_state =
           g_sr_data->multinet->detect(g_sr_data->model_data, res->data);
 
@@ -233,6 +266,10 @@ static void audio_detect_task(void *arg) {
       if (mn_state == ESP_MN_STATE_DETECTED) {
         esp_mn_results_t *mn_res =
             g_sr_data->multinet->get_results(g_sr_data->model_data);
+        if (mn_res == NULL || mn_res->num <= 0) {
+          wait_for_command = false;
+          continue;
+        }
         for (int i = 0; i < mn_res->num; i++) {
           ESP_LOGI(TAG, "Command ID%d, phrase ID%d, prob %f",
                    mn_res->command_id[i], mn_res->phrase_id[i],
@@ -244,19 +281,37 @@ static void audio_detect_task(void *arg) {
             .state = mn_state,
             .command_id = mn_res->command_id[0],
         };
-        xQueueSend(g_sr_data->result_que, &result, 0);
+        sr_result_queue_push(&result);
+        wait_for_command = false;
       } else if (mn_state == ESP_MN_STATE_TIMEOUT) {
         sr_result_t result = {
             .wakenet_mode = WAKENET_NO_DETECT,
             .state = mn_state,
             .command_id = 0,
         };
-        xQueueSend(g_sr_data->result_que, &result, 0);
+        sr_result_queue_push(&result);
+        wait_for_command = false;
       }
+    }
+
+#if CONFIG_ESP_TASK_WDT_EN
+    esp_task_wdt_reset();
+#endif
+
+    /* Guarantee core-1 idle slices so task WDT doesn't trip on IDLE1. */
+    if ((loop_cnt++ & 0x01U) == 0U) {
+      vTaskDelay(pdMS_TO_TICKS(1));
+    } else {
+      taskYIELD();
     }
   }
 
-  heap_caps_free(buff);
+  if (g_sr_data && g_sr_data->event_group) {
+    xEventGroupSetBits(g_sr_data->event_group, DETECT_DELETED);
+  }
+#if CONFIG_ESP_TASK_WDT_EN
+  esp_task_wdt_delete(NULL);
+#endif
   vTaskDelete(NULL);
 }
 
@@ -298,7 +353,7 @@ esp_err_t app_sr_start(bool record_en) {
   ESP_GOTO_ON_FALSE(NULL != g_sr_data, ESP_ERR_NO_MEM, err, TAG,
                     "Failed allocate sr_data");
 
-  g_sr_data->result_que = xQueueCreate(3, sizeof(sr_result_t));
+  g_sr_data->result_que = xQueueCreate(SR_RESULT_QUEUE_LEN, sizeof(sr_result_t));
   ESP_GOTO_ON_FALSE(NULL != g_sr_data->result_que, ESP_ERR_NO_MEM, err, TAG,
                     "Failed create result queue");
 
@@ -369,20 +424,23 @@ esp_err_t app_sr_start(bool record_en) {
 
   ret_val =
       xTaskCreatePinnedToCore(&audio_feed_task, "Feed Task", 8 * 1024,
-                              (void *)afe_data, 12, &g_sr_data->feed_task, 1);
+                              (void *)afe_data, SR_FEED_TASK_PRIO,
+                              &g_sr_data->feed_task, SR_FEED_TASK_CORE);
   ESP_GOTO_ON_FALSE(pdPASS == ret_val, ESP_FAIL, err, TAG,
                     "Failed create audio feed task");
 
   ret_val =
       xTaskCreatePinnedToCore(&audio_detect_task, "Detect Task", 16 * 1024,
-                              (void *)afe_data, 12, &g_sr_data->detect_task, 1);
+                              (void *)afe_data, SR_DETECT_TASK_PRIO,
+                              &g_sr_data->detect_task, SR_DETECT_TASK_CORE);
   ESP_GOTO_ON_FALSE(pdPASS == ret_val, ESP_FAIL, err, TAG,
                     "Failed create audio detect task");
 
   /* sr_handler_task is implemented in app_sr_handler.c */
   ret_val =
       xTaskCreatePinnedToCore(&sr_handler_task, "SR Handler Task", 6 * 1024,
-                              NULL, 5, &g_sr_data->handle_task, 1);
+                              NULL, SR_HANDLE_TASK_PRIO, &g_sr_data->handle_task,
+                              SR_HANDLE_TASK_CORE);
   ESP_GOTO_ON_FALSE(pdPASS == ret_val, ESP_FAIL, err, TAG,
                     "Failed create audio handler task");
 
@@ -397,8 +455,28 @@ esp_err_t app_sr_stop(void) {
     return ESP_OK;
   }
 
-  xEventGroupSetBits(g_sr_data->event_group, NEED_DELETE);
-  vTaskDelay(pdMS_TO_TICKS(100));
+  EventBits_t stop_bits = 0;
+  if (g_sr_data->event_group) {
+    xEventGroupSetBits(g_sr_data->event_group, NEED_DELETE);
+    stop_bits = xEventGroupWaitBits(g_sr_data->event_group,
+                                    FEED_DELETED | DETECT_DELETED, pdFALSE,
+                                    pdTRUE, pdMS_TO_TICKS(SR_STOP_WAIT_MS));
+  }
+
+  if (g_sr_data->feed_task && ((stop_bits & FEED_DELETED) == 0)) {
+    vTaskDelete(g_sr_data->feed_task);
+  }
+  g_sr_data->feed_task = NULL;
+
+  if (g_sr_data->detect_task && ((stop_bits & DETECT_DELETED) == 0)) {
+    vTaskDelete(g_sr_data->detect_task);
+  }
+  g_sr_data->detect_task = NULL;
+
+  if (g_sr_data->handle_task) {
+    vTaskDelete(g_sr_data->handle_task);
+    g_sr_data->handle_task = NULL;
+  }
 
   if (g_sr_data->result_que) {
     vQueueDelete(g_sr_data->result_que);
@@ -417,10 +495,12 @@ esp_err_t app_sr_stop(void) {
 
   if (g_sr_data->model_data) {
     g_sr_data->multinet->destroy(g_sr_data->model_data);
+    g_sr_data->model_data = NULL;
   }
 
   if (g_sr_data->afe_data) {
     g_sr_data->afe_handle->destroy(g_sr_data->afe_data);
+    g_sr_data->afe_data = NULL;
   }
 
   sr_cmd_t *it, *tmp_it;
@@ -431,10 +511,12 @@ esp_err_t app_sr_stop(void) {
 
   if (g_sr_data->afe_in_buffer) {
     heap_caps_free(g_sr_data->afe_in_buffer);
+    g_sr_data->afe_in_buffer = NULL;
   }
 
   if (g_sr_data->afe_out_buffer) {
     heap_caps_free(g_sr_data->afe_out_buffer);
+    g_sr_data->afe_out_buffer = NULL;
   }
 
   heap_caps_free(g_sr_data);
@@ -446,7 +528,9 @@ esp_err_t app_sr_get_result(sr_result_t *result, TickType_t xTicksToWait) {
   ESP_RETURN_ON_FALSE(NULL != g_sr_data, ESP_ERR_INVALID_STATE, TAG,
                       "SR is not running");
 
-  xQueueReceive(g_sr_data->result_que, result, xTicksToWait);
+  if (xQueueReceive(g_sr_data->result_que, result, xTicksToWait) != pdTRUE) {
+    return ESP_ERR_TIMEOUT;
+  }
   return ESP_OK;
 }
 

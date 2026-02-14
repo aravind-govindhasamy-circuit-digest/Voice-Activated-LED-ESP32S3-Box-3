@@ -212,14 +212,18 @@ void sr_anim_start(void) {
   if (g_sr_mask == NULL) {
     return;
   }
+  ui_acquire();
   lv_event_send(g_sr_mask, LV_EVENT_VALUE_CHANGED, (void *)true);
+  ui_release();
 }
 
 void sr_anim_stop(void) {
   if (g_sr_mask == NULL) {
     return;
   }
+  ui_acquire();
   lv_event_send(g_sr_mask, LV_EVENT_VALUE_CHANGED, (void *)false);
+  ui_release();
 }
 
 void sr_anim_set_text(char *text) {

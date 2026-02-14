@@ -2,6 +2,7 @@
 
 #include "esp_err.h"
 #include <stdbool.h>
+#include <stdint.h>
 
 /**
  * @brief Initialize MQTT client
@@ -29,3 +30,19 @@ esp_err_t app_mqtt_publish_state(bool state);
  * @return esp_err_t
  */
 esp_err_t app_mqtt_publish_sensor_data(float temp, float hum, bool presence);
+
+/**
+ * @brief Publish fan state to MQTT.
+ *
+ * @param on Fan power state.
+ * @param speed Fan speed 0-100.
+ * @return esp_err_t
+ */
+esp_err_t app_mqtt_publish_fan_state(bool on, uint8_t speed);
+
+/**
+ * @brief Query current MQTT link status.
+ *
+ * @return true if connected.
+ */
+bool app_mqtt_is_connected(void);
