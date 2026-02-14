@@ -5,6 +5,7 @@
  */
 
 #include "esp_log.h"
+#include "esp_task_wdt.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
@@ -12,33 +13,62 @@
 #include "bsp_board.h"
 #include "bsp_storage.h"
 
+#include "app/fan_ctrl.h"
 #include "app_mqtt.h"
 #include "app_sensor.h"
 #include "app_sr.h"
 #include "app_wifi.h"
+#include "fan_ui.h"
 #include "gui/ui_boot_animate.h"
 #include "gui/ui_sr.h"
 #include "light_ctrl.h"
 #include "light_ui.h"
 #include "nvs_flash.h"
+#include <math.h>
 
 static const char *TAG = "main";
 
 static void sensor_task(void *arg) {
-  float temp, hum;
-  bool presence;
+  float temp = 0, hum = 0;
+  bool presence = false;
+  float last_temp = 0, last_hum = 0;
+  bool last_presence = false;
+  uint32_t last_publish_time = 0;
+
   while (1) {
     if (app_sensor_get_values(&temp, &hum) == ESP_OK) {
       presence = app_sensor_get_presence();
-      app_mqtt_publish_sensor_data(temp, hum, presence);
+      uint32_t now = xTaskGetTickCount();
+
+      // Check for significant changes
+      bool changed = false;
+      if (presence != last_presence) {
+        changed = true;
+      } else if (fabs(temp - last_temp) > 0.5f) {
+        changed = true;
+      } else if (fabs(hum - last_hum) > 2.0f) {
+        changed = true;
+      }
+
+      // Heartbeat: Publish at least every 60 seconds regardless of change
+      bool heartbeat = (now - last_publish_time) > pdMS_TO_TICKS(60000);
+
+      if (changed || heartbeat) {
+        app_mqtt_publish_sensor_data(temp, hum, presence);
+        last_temp = temp;
+        last_hum = hum;
+        last_presence = presence;
+        last_publish_time = now;
+      }
     }
-    vTaskDelay(pdMS_TO_TICKS(10000)); // Report every 10 seconds
+    vTaskDelay(pdMS_TO_TICKS(1000)); // Poll every second for responsiveness
   }
 }
 
 static void after_boot(void) {
-  /* Minimal main screen + SR overlay */
+  /* Minimal main screen */
   ESP_ERROR_CHECK(light_ui_start());
+  ESP_ERROR_CHECK(fan_ui_start());
   ui_sr_anim_init();
 }
 
@@ -72,6 +102,7 @@ void app_main(void) {
 
   ESP_LOGI(TAG, "start light demo UI");
   ESP_ERROR_CHECK(light_ctrl_init());
+  ESP_ERROR_CHECK(fan_ctrl_init());
 
   // Sensor initialized later
 
@@ -79,10 +110,17 @@ void app_main(void) {
   boot_animate_start(after_boot);
   bsp_display_unlock();
 
+  /* Increase Task WDT timeout to 15s to handle heavy Multinet processing */
+  esp_task_wdt_config_t wdt_config = {
+      .timeout_ms = 15000,
+      .idle_core_mask = (1 << portNUM_PROCESSORS) - 1,
+      .trigger_panic = true,
+  };
+  esp_task_wdt_reconfigure(&wdt_config);
+
   vTaskDelay(pdMS_TO_TICKS(500));
   bsp_display_backlight_on();
 
-  ESP_LOGI(TAG, "speech recognition start (english, 2 cmds)");
   vTaskDelay(pdMS_TO_TICKS(1500));
   ESP_ERROR_CHECK(app_sr_start(false));
 

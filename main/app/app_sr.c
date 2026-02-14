@@ -4,6 +4,7 @@
  * SPDX-License-Identifier: Unlicense OR CC0-1.0
  */
 
+#include <math.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -36,10 +37,9 @@
 
 static const char *TAG = "app_sr";
 
-/* Manual simple linked list for commands to avoid SLIST macro lint issues */
-typedef struct {
-  sr_cmd_t *head;
-} sr_cmd_list_t;
+/* Standard SLIST head for commands */
+SLIST_HEAD(sr_cmd_list_s, sr_cmd_t);
+typedef struct sr_cmd_list_s sr_cmd_list_t;
 
 typedef struct {
   sr_language_t lang;
@@ -79,6 +79,29 @@ static const sr_cmd_t g_default_cmd_info[] = {
     /* English only, minimal command set */
     {SR_CMD_LIGHT_ON, SR_LANG_EN, 0, "turn on light", "TkN nN LiT", {NULL}},
     {SR_CMD_LIGHT_OFF, SR_LANG_EN, 0, "turn off light", "TkN eF LiT", {NULL}},
+    {SR_CMD_JOKE, SR_LANG_EN, 0, "tell me a joke", "TEL ME A JOK", {NULL}},
+    {SR_CMD_SING, SR_LANG_EN, 0, "sing a song", "SING A SONG", {NULL}},
+    {SR_CMD_ALPHABET,
+     SR_LANG_EN,
+     0,
+     "what is the alphabet",
+     "WAT IZ THE ALFABET",
+     {NULL}},
+    {SR_CMD_WHO_ARE_YOU, SR_LANG_EN, 0, "who are you", "HOO AR YOO", {NULL}},
+    {SR_CMD_LOVE_YOU, SR_LANG_EN, 0, "i love you", "I LUV YOO", {NULL}},
+    {SR_CMD_STOP, SR_LANG_EN, 0, "stop", "STOP", {NULL}},
+    {SR_CMD_CLOSE, SR_LANG_EN, 0, "close", "KLOS", {NULL}},
+    {SR_CMD_HI_BRO, SR_LANG_EN, 0, "hi bro", "HI BRO", {NULL}},
+    {SR_CMD_CHECK_SENSORS,
+     SR_LANG_EN,
+     0,
+     "check sensors",
+     "CHEK SENSORZ",
+     {NULL}},
+    {SR_CMD_ROBOT_DANCE, SR_LANG_EN, 0, "robot dance", "ROBOT DANS", {NULL}},
+    {SR_CMD_CHANGE_MOOD, SR_LANG_EN, 0, "change mood", "CHANJ MOOD", {NULL}},
+    {SR_CMD_RAINBOW_MODE, SR_LANG_EN, 0, "rainbow mode", "RANBO MOD", {NULL}},
+    {SR_CMD_GO_PLAY, SR_LANG_EN, 0, "go play", "GO PLA", {NULL}},
 };
 
 static void audio_feed_task(void *arg) {
@@ -113,23 +136,46 @@ static void audio_feed_task(void *arg) {
                  audio_chunksize * sizeof(int16_t) * feed_channel, &bytes_read,
                  portMAX_DELAY);
 
+    /* Zero out buffer if audio is playing to prevent feedback loop (ghost
+     * triggers) */
+    if (sr_echo_is_playing()) {
+      memset(audio_buffer, 0, audio_chunksize * sizeof(int16_t) * feed_channel);
+    }
+
     /* Feed audio data to AFE for processing */
     afe_handle->feed(afe_data, audio_buffer);
+
+    // Diagnostic: Check if we have any signal (RMS)
+    static int rms_count = 0;
+    if (rms_count++ % 30 == 0) {
+      float rms = 0;
+      for (int i = 0; i < audio_chunksize; i++) {
+        float sample = (float)audio_buffer[i * 3];
+        rms += sample * sample;
+      }
+      rms = sqrtf(rms / audio_chunksize);
+      ESP_LOGI(TAG, "Audio In RMS: %.2f (Mic1: %d)", rms, audio_buffer[0]);
+    }
 
 #if CONFIG_ESP_TASK_WDT_EN
     esp_task_wdt_reset();
 #endif
 
-    /* Write recorded data to SD card if enabled */
+    /* Write recorded data to SD card if enabled - DISABLED to prevent lag in
+     * real-time feed */
+    /*
     if (g_sr_data->b_record_en && g_sr_data->fp) {
       fwrite(audio_buffer, 1, audio_chunksize * sizeof(int16_t) * feed_channel,
              g_sr_data->fp);
     }
+    */
   }
 
   heap_caps_free(audio_buffer);
   vTaskDelete(NULL);
 }
+
+static bool manul_detect_flag = false;
 
 static void audio_detect_task(void *arg) {
   esp_afe_sr_data_t *afe_data = (esp_afe_sr_data_t *)arg;
@@ -164,8 +210,10 @@ static void audio_detect_task(void *arg) {
        errors. fetch() blocks implicitly until audio is ready, providing
        sufficient yield. */
 
-    if (res->wakeup_state == WAKENET_DETECTED) {
-      ESP_LOGI(TAG, "Wakeup detected");
+    if (res->wakeup_state == WAKENET_DETECTED || manul_detect_flag) {
+      ESP_LOGI(TAG, "Wakeup detected%s (WakeID: %d)",
+               manul_detect_flag ? " (Manual)" : "", res->wake_word_index);
+      manul_detect_flag = false;
       sr_result_t result = {
           .wakenet_mode = WAKENET_DETECTED,
           .state = ESP_MN_STATE_DETECTING,
@@ -177,6 +225,10 @@ static void audio_detect_task(void *arg) {
     if (g_sr_data->model_data) {
       esp_mn_state_t mn_state =
           g_sr_data->multinet->detect(g_sr_data->model_data, res->data);
+
+#if CONFIG_ESP_TASK_WDT_EN
+      esp_task_wdt_reset();
+#endif
 
       if (mn_state == ESP_MN_STATE_DETECTED) {
         esp_mn_results_t *mn_res =
@@ -254,7 +306,7 @@ esp_err_t app_sr_start(bool record_en) {
   ESP_GOTO_ON_FALSE(NULL != g_sr_data->event_group, ESP_ERR_NO_MEM, err, TAG,
                     "Failed create event_group");
 
-  g_sr_data->cmd_list.head = NULL;
+  SLIST_INIT(&g_sr_data->cmd_list);
 
   /* Create file if record to SD card enabled*/
   g_sr_data->b_record_en = record_en;
@@ -283,18 +335,18 @@ esp_err_t app_sr_start(bool record_en) {
 
   afe_config.wakenet_model_name =
       esp_srmodel_filter(models, ESP_WN_PREFIX, NULL);
-  afe_config.aec_init = false;
+  afe_config.aec_init = true;
   afe_config.voice_communication_agc_init = true;
-  /* Reduced gain to 12.
-     Higher values like 25 cause clipping during tones (when AEC is off).
-     12-15 is typically the sweet spot for clean S3-BOX recognition. */
-  afe_config.voice_communication_agc_gain = 12;
+  /* Reduced gain to 8.
+     The user reported "ghost" triggers (timeout loop).
+     Lower gain + AEC + playback suppression should break the loop. */
+  afe_config.voice_communication_agc_gain = 8;
 
-  /* Increased ringbuffer size to 150 to handle longer I2S contentions */
-  afe_config.afe_ringbuf_size = 150;
+  /* Increased ringbuffer size to 300 to survive longer contentions */
+  afe_config.afe_ringbuf_size = 300;
   afe_config.agc_mode = AFE_MN_PEAK_AGC_MODE_2;
-  /* Enabled voice processing for better signal quality */
-  afe_config.voice_communication_init = true;
+  /* Disabled voice processing to resolve conflict with wakenet_init */
+  afe_config.voice_communication_init = false;
   afe_config.wakenet_init = true;
 
   esp_afe_sr_data_t *afe_data = afe_handle->create_from_config(&afe_config);
@@ -316,21 +368,21 @@ esp_err_t app_sr_start(bool record_en) {
      WDT as it blocks indefinitely on queue. */
 
   ret_val =
-      xTaskCreatePinnedToCore(&audio_feed_task, "Feed Task", 4 * 1024,
-                              (void *)afe_data, 12, &g_sr_data->feed_task, 0);
+      xTaskCreatePinnedToCore(&audio_feed_task, "Feed Task", 8 * 1024,
+                              (void *)afe_data, 12, &g_sr_data->feed_task, 1);
   ESP_GOTO_ON_FALSE(pdPASS == ret_val, ESP_FAIL, err, TAG,
                     "Failed create audio feed task");
 
   ret_val =
-      xTaskCreatePinnedToCore(&audio_detect_task, "Detect Task", 8 * 1024,
-                              (void *)afe_data, 15, &g_sr_data->detect_task, 1);
+      xTaskCreatePinnedToCore(&audio_detect_task, "Detect Task", 16 * 1024,
+                              (void *)afe_data, 12, &g_sr_data->detect_task, 1);
   ESP_GOTO_ON_FALSE(pdPASS == ret_val, ESP_FAIL, err, TAG,
                     "Failed create audio detect task");
 
   /* sr_handler_task is implemented in app_sr_handler.c */
   ret_val =
       xTaskCreatePinnedToCore(&sr_handler_task, "SR Handler Task", 6 * 1024,
-                              NULL, 5, &g_sr_data->handle_task, 0);
+                              NULL, 5, &g_sr_data->handle_task, 1);
   ESP_GOTO_ON_FALSE(pdPASS == ret_val, ESP_FAIL, err, TAG,
                     "Failed create audio handler task");
 
@@ -371,13 +423,11 @@ esp_err_t app_sr_stop(void) {
     g_sr_data->afe_handle->destroy(g_sr_data->afe_data);
   }
 
-  sr_cmd_t *it = g_sr_data->cmd_list.head;
-  while (it) {
-    sr_cmd_t *next = (sr_cmd_t *)it->next.sle_next;
+  sr_cmd_t *it, *tmp_it;
+  SLIST_FOREACH_SAFE(it, &g_sr_data->cmd_list, next, tmp_it) {
+    SLIST_REMOVE(&g_sr_data->cmd_list, it, sr_cmd_t, next);
     heap_caps_free(it);
-    it = next;
   }
-  g_sr_data->cmd_list.head = NULL;
 
   if (g_sr_data->afe_in_buffer) {
     heap_caps_free(g_sr_data->afe_in_buffer);
@@ -416,9 +466,8 @@ esp_err_t app_sr_add_cmd(const sr_cmd_t *cmd) {
                       "memory for sr cmd is not enough");
   memcpy(item, cmd, sizeof(sr_cmd_t));
 
-  /* Manual SLIST insert head */
-  item->next.sle_next = (struct sr_cmd_t *)g_sr_data->cmd_list.head;
-  g_sr_data->cmd_list.head = item;
+  /* Use standard SLIST insert head */
+  SLIST_INSERT_HEAD(&g_sr_data->cmd_list, item, next);
 
   if (strstr(g_sr_data->mn_name, "mn6_en")) {
     esp_mn_commands_add(g_sr_data->cmd_num, (char *)cmd->str);
@@ -439,8 +488,8 @@ esp_err_t app_sr_modify_cmd(uint32_t id, const sr_cmd_t *cmd) {
   ESP_RETURN_ON_FALSE(cmd->lang == g_sr_data->lang, ESP_ERR_INVALID_ARG, TAG,
                       "cmd lang error");
 
-  sr_cmd_t *it = g_sr_data->cmd_list.head;
-  while (it) {
+  sr_cmd_t *it;
+  SLIST_FOREACH(it, &g_sr_data->cmd_list, next) {
     if (it->id == id) {
       ESP_LOGI(TAG, "modify cmd [%d] from %s to %s", (int)id, it->str,
                cmd->str);
@@ -449,13 +498,13 @@ esp_err_t app_sr_modify_cmd(uint32_t id, const sr_cmd_t *cmd) {
       } else {
         esp_mn_commands_modify(it->phoneme, (char *)cmd->phoneme);
       }
-      /* Keep the links when copying */
-      struct sr_cmd_t *saved_next = (struct sr_cmd_t *)it->next.sle_next;
+      /* Keep the links when copying - standard SLIST doesn't need to save next
+       * manually if we just copy data */
+      sr_cmd_t *saved_next = SLIST_NEXT(it, next);
       memcpy(it, cmd, sizeof(sr_cmd_t));
-      it->next.sle_next = saved_next;
+      SLIST_NEXT(it, next) = saved_next;
       break;
     }
-    it = (sr_cmd_t *)it->next.sle_next;
   }
 
   return ESP_OK;
@@ -467,21 +516,14 @@ esp_err_t app_sr_remove_cmd(uint32_t id) {
   ESP_RETURN_ON_FALSE(id < g_sr_data->cmd_num, ESP_ERR_INVALID_ARG, TAG,
                       "cmd id out of range");
 
-  sr_cmd_t *it = g_sr_data->cmd_list.head;
-  sr_cmd_t *prev = NULL;
-  while (it) {
+  sr_cmd_t *it, *tmp_it;
+  SLIST_FOREACH_SAFE(it, &g_sr_data->cmd_list, next, tmp_it) {
     if (it->id == id) {
-      if (prev == NULL) {
-        g_sr_data->cmd_list.head = (sr_cmd_t *)it->next.sle_next;
-      } else {
-        prev->next.sle_next = it->next.sle_next;
-      }
+      SLIST_REMOVE(&g_sr_data->cmd_list, it, sr_cmd_t, next);
       esp_mn_commands_remove((char *)it->str);
       heap_caps_free(it);
       break;
     }
-    prev = it;
-    it = (sr_cmd_t *)it->next.sle_next;
   }
 
   return ESP_OK;
@@ -492,13 +534,11 @@ esp_err_t app_sr_remove_all_cmd(void) {
     return ESP_OK;
   }
 
-  sr_cmd_t *it = g_sr_data->cmd_list.head;
-  while (it) {
-    sr_cmd_t *next = (sr_cmd_t *)it->next.sle_next;
+  sr_cmd_t *it, *tmp;
+  SLIST_FOREACH_SAFE(it, &g_sr_data->cmd_list, next, tmp) {
+    SLIST_REMOVE(&g_sr_data->cmd_list, it, sr_cmd_t, next);
     heap_caps_free(it);
-    it = next;
   }
-  g_sr_data->cmd_list.head = NULL;
   esp_mn_commands_clear();
   g_sr_data->cmd_num = 0;
   return ESP_OK;
@@ -511,7 +551,8 @@ esp_err_t app_sr_update_cmds(void) {
   app_sr_remove_all_cmd();
 
   const sr_cmd_t *cmd_info = g_default_cmd_info;
-  for (size_t i = 0; i < sizeof(g_default_cmd_info) / sizeof(sr_cmd_t); i++) {
+  size_t cmd_count = sizeof(g_default_cmd_info) / sizeof(g_default_cmd_info[0]);
+  for (size_t i = 0; i < cmd_count; i++) {
     if (cmd_info[i].lang == g_sr_data->lang) {
       app_sr_add_cmd(&cmd_info[i]);
     }
@@ -525,12 +566,11 @@ const sr_cmd_t *app_sr_get_cmd_from_id(uint32_t id) {
   ESP_RETURN_ON_FALSE(id < g_sr_data->cmd_num, NULL, TAG,
                       "cmd id out of range");
 
-  sr_cmd_t *it = g_sr_data->cmd_list.head;
-  while (it) {
+  sr_cmd_t *it;
+  SLIST_FOREACH(it, &g_sr_data->cmd_list, next) {
     if (it->id == id) {
       return (const sr_cmd_t *)it;
     }
-    it = (sr_cmd_t *)it->next.sle_next;
   }
 
   return NULL;
@@ -542,15 +582,14 @@ uint8_t app_sr_search_cmd_from_user_cmd(sr_user_cmd_t user_cmd,
   ESP_RETURN_ON_FALSE(id_list != NULL, 0, TAG, "id_list is NULL");
 
   uint8_t count = 0;
-  sr_cmd_t *it = g_sr_data->cmd_list.head;
-  while (it) {
+  sr_cmd_t *it;
+  SLIST_FOREACH(it, &g_sr_data->cmd_list, next) {
     if (it->cmd == user_cmd) {
       id_list[count++] = (uint8_t)it->id;
       if (count >= max_len) {
         break;
       }
     }
-    it = (sr_cmd_t *)it->next.sle_next;
   }
 
   return count;
@@ -562,15 +601,14 @@ uint8_t app_sr_search_cmd_from_phoneme(const char *phoneme, uint8_t *id_list,
   ESP_RETURN_ON_FALSE(id_list != NULL, 0, TAG, "id_list is NULL");
 
   uint8_t count = 0;
-  sr_cmd_t *it = g_sr_data->cmd_list.head;
-  while (it) {
+  sr_cmd_t *it;
+  SLIST_FOREACH(it, &g_sr_data->cmd_list, next) {
     if (strcmp(it->phoneme, phoneme) == 0) {
       id_list[count++] = (uint8_t)it->id;
       if (count >= max_len) {
         break;
       }
     }
-    it = (sr_cmd_t *)it->next.sle_next;
   }
 
   return count;

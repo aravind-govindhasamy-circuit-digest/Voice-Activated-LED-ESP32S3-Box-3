@@ -117,10 +117,16 @@ static esp_err_t sr_echo_play(audio_segment_t seg) {
   size_t len = s_audio[seg].len - sizeof(wav_header_t);
   len &= 0xfffffffc;
 
-  /* Configure codec for wav format */
-  ESP_LOGI(TAG, "sr_echo_play(%d): %d Hz, %d bits, data_len=%u", seg,
-           (int)h->SampleRate, (int)h->BitsPerSample, (unsigned)len);
-  bsp_codec_set_fs(h->SampleRate, h->BitsPerSample, I2S_SLOT_MODE_STEREO);
+  /* Configure codec for wav format, skip if already at target frequency/bits */
+  static int s_last_fs = 0;
+  static int s_last_bits = 0;
+  if (s_last_fs != h->SampleRate || s_last_bits != h->BitsPerSample) {
+    ESP_LOGI(TAG, "sr_echo_play(%d): %d Hz, %d bits, data_len=%u", seg,
+             (int)h->SampleRate, (int)h->BitsPerSample, (unsigned)len);
+    bsp_codec_set_fs(h->SampleRate, h->BitsPerSample, I2S_SLOT_MODE_STEREO);
+    s_last_fs = h->SampleRate;
+    s_last_bits = h->BitsPerSample;
+  }
   /* Ensure codec is unmuted and volume is reasonable for feedback tones */
   bsp_codec_mute_set(false);
   int vol = 100;
@@ -195,8 +201,47 @@ void sr_handler_task(void *pvParam) {
         (void)light_ctrl_set(false);
         light_ui_set(false);
         break;
+      case SR_CMD_JOKE:
+        ESP_LOGI(TAG, "Command: TELL ME A JOKE");
+        break;
+      case SR_CMD_SING:
+        ESP_LOGI(TAG, "Command: SING A SONG");
+        break;
+      case SR_CMD_ALPHABET:
+        ESP_LOGI(TAG, "Command: WHAT IS THE ALPHABET");
+        break;
+      case SR_CMD_WHO_ARE_YOU:
+        ESP_LOGI(TAG, "Command: WHO ARE YOU");
+        break;
+      case SR_CMD_LOVE_YOU:
+        ESP_LOGI(TAG, "Command: I LOVE YOU");
+        break;
+      case SR_CMD_STOP:
+        ESP_LOGI(TAG, "Command: STOP");
+        break;
+      case SR_CMD_CLOSE:
+        ESP_LOGI(TAG, "Command: CLOSE");
+        break;
+      case SR_CMD_HI_BRO:
+        ESP_LOGI(TAG, "Command: HI BRO");
+        break;
+      case SR_CMD_CHECK_SENSORS:
+        ESP_LOGI(TAG, "Command: CHECK SENSORS");
+        break;
+      case SR_CMD_ROBOT_DANCE:
+        ESP_LOGI(TAG, "Command: ROBOT DANCE");
+        break;
+      case SR_CMD_CHANGE_MOOD:
+        ESP_LOGI(TAG, "Command: CHANGE MOOD");
+        break;
+      case SR_CMD_RAINBOW_MODE:
+        ESP_LOGI(TAG, "Command: RAINBOW MODE");
+        break;
+      case SR_CMD_GO_PLAY:
+        ESP_LOGI(TAG, "Command: GO PLAY");
+        break;
       default:
-        ESP_LOGW(TAG, "Unhandled cmd");
+        ESP_LOGW(TAG, "Unhandled cmd: %d", cmd ? cmd->cmd : -1);
         break;
       }
     }

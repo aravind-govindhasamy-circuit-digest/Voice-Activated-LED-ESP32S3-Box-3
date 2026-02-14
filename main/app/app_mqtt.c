@@ -11,7 +11,9 @@
 
 #include "app_mqtt.h"
 #include "app_status.h"
+#include "fan_ctrl.h"
 #include "light_ctrl.h"
+
 
 static const char *TAG = "app_mqtt";
 
@@ -24,6 +26,11 @@ static esp_mqtt_client_handle_t s_client = NULL;
 #define MQTT_TOPIC_TEMP CONFIG_EXAMPLE_MQTT_TOPIC_TEMP
 #define MQTT_TOPIC_HUM CONFIG_EXAMPLE_MQTT_TOPIC_HUM
 #define MQTT_TOPIC_PRESENCE CONFIG_EXAMPLE_MQTT_TOPIC_PRESENCE
+
+#define MQTT_TOPIC_FAN_SET "devices/box/fan/set"
+#define MQTT_TOPIC_FAN_SPEED_SET "devices/box/fan/speed/set"
+#define MQTT_TOPIC_FAN_STATE "devices/box/fan/state"
+#define MQTT_TOPIC_FAN_SPEED "devices/box/fan/speed"
 
 static void mqtt_event_handler(void *handler_args, esp_event_base_t base,
                                int32_t event_id, void *event_data) {
@@ -39,8 +46,10 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base,
     app_status_update_mqtt(true);
     msg_id = esp_mqtt_client_subscribe(client, MQTT_TOPIC_SET, 0);
     ESP_LOGI(TAG, "sent subscribe successful, msg_id=%d", msg_id);
+    esp_mqtt_client_subscribe(client, MQTT_TOPIC_FAN_SET, 0);
+    esp_mqtt_client_subscribe(client, MQTT_TOPIC_FAN_SPEED_SET, 0);
 
-    // Publish initial state
+    // Publish initial states
     app_mqtt_publish_state(light_ctrl_get());
     break;
   case MQTT_EVENT_DISCONNECTED:
@@ -67,6 +76,20 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base,
       } else if (strncmp(event->data, "off", event->data_len) == 0) {
         light_ctrl_set(false);
       }
+    } else if (strncmp(event->topic, MQTT_TOPIC_FAN_SET, event->topic_len) ==
+               0) {
+      if (strncmp(event->data, "on", event->data_len) == 0) {
+        fan_ctrl_set_power(true);
+      } else if (strncmp(event->data, "off", event->data_len) == 0) {
+        fan_ctrl_set_power(false);
+      }
+    } else if (strncmp(event->topic, MQTT_TOPIC_FAN_SPEED_SET,
+                       event->topic_len) == 0) {
+      char buf[16] = {0};
+      int len = (event->data_len < 15) ? event->data_len : 15;
+      memcpy(buf, event->data, len);
+      int speed = atoi(buf);
+      fan_ctrl_set_speed((uint8_t)speed);
     }
     break;
   case MQTT_EVENT_ERROR:
