@@ -12,6 +12,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include <stdbool.h>
+#include <stddef.h>
 #include <sys/queue.h>
 
 
@@ -98,6 +99,7 @@ uint8_t app_sr_search_cmd_from_user_cmd(sr_user_cmd_t user_cmd,
 uint8_t app_sr_search_cmd_from_phoneme(const char *phoneme, uint8_t *id_list,
                                        uint16_t max_len);
 esp_err_t app_sr_update_cmds(void);
+size_t app_sr_copy_last_utterance(int16_t *dst, size_t max_samples);
 
 #ifdef __cplusplus
 }

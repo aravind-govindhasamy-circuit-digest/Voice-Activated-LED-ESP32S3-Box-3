@@ -1,0 +1,64 @@
+menu "Project Configuration"
+
+    config EXAMPLE_WIFI_SSID
+        string "WiFi SSID"
+        default ""
+        help
+            SSID of the WiFi network to connect to.
+
+    config EXAMPLE_WIFI_PASSWORD
+        string "WiFi Password"
+        default ""
+        help
+            Password of the WiFi network to connect to.
+
+    config EXAMPLE_MQTT_BROKER_URL
+        string "MQTT Broker URL"
+        default ""
+        help
+            URL of the MQTT broker to connect to.
+            e.g. mqtt://192.168.1.100 or mqtt://example.com
+
+    config EXAMPLE_MQTT_USERNAME
+        string "MQTT Username"
+        default ""
+        help
+            Username for MQTT broker authentication.
+
+    config EXAMPLE_MQTT_PASSWORD
+        string "MQTT Password"
+        default ""
+        help
+            Password for MQTT broker authentication.
+
+    config EXAMPLE_MQTT_TOPIC_SET
+        string "MQTT Set Topic"
+        default "devices/box/light/set"
+        help
+            MQTT topic to listen for light control commands (on/off).
+
+    config EXAMPLE_MQTT_TOPIC_STATE
+        string "MQTT State Topic"
+        default "devices/box/light/state"
+        help
+            MQTT topic to publish current light state.
+
+    config EXAMPLE_MQTT_TOPIC_TEMP
+        string "MQTT Temp Topic"
+        default "devices/box/sensor/temperature"
+        help
+            MQTT topic to publish temperature data.
+
+    config EXAMPLE_MQTT_TOPIC_HUM
+        string "MQTT Humidity Topic"
+        default "devices/box/sensor/humidity"
+        help
+            MQTT topic to publish humidity data.
+
+    config EXAMPLE_MQTT_TOPIC_PRESENCE
+        string "MQTT Presence Topic"
+        default "devices/box/sensor/presence"
+        help
+            MQTT topic to publish presence status.
+
+endmenu

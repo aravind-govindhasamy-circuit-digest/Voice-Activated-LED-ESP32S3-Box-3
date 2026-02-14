@@ -58,6 +58,8 @@ typedef struct {
   TaskHandle_t handle_task;
   QueueHandle_t result_que;
   EventGroupHandle_t event_group;
+  int16_t *utterance_buf;
+  size_t utterance_samples;
 
   FILE *fp;
   bool b_record_en;
@@ -80,6 +82,13 @@ static sr_data_t *g_sr_data = NULL;
 #define SR_DETECT_TASK_PRIO 12
 #define SR_HANDLE_TASK_PRIO 5
 #define SR_STOP_WAIT_MS 1500
+#define SR_I2S_INPUT_CHANNELS 2
+#define SR_WAKE_DEBOUNCE_MS 1200
+#define SR_WAKE_SESSION_GAP_MS 1800
+#define SR_FETCH_WARN_THROTTLE 50
+#define SR_UTTERANCE_MAX_SAMPLES (16000 * 4)
+
+static portMUX_TYPE s_utterance_lock = portMUX_INITIALIZER_UNLOCKED;
 
 static bool sr_should_stop(void) {
   return (g_sr_data != NULL) && (g_sr_data->event_group != NULL) &&
@@ -102,40 +111,58 @@ static void sr_result_queue_push(const sr_result_t *result) {
  * @brief all default commands
  */
 static const sr_cmd_t g_default_cmd_info[] = {
-    /* English only, minimal command set */
-    {SR_CMD_LIGHT_ON, SR_LANG_EN, 0, "turn on light", "TkN nN LiT", {NULL}},
-    {SR_CMD_LIGHT_OFF, SR_LANG_EN, 0, "turn off light", "TkN eF LiT", {NULL}},
-    {SR_CMD_JOKE, SR_LANG_EN, 0, "tell me a joke", "TEL ME A JOK", {NULL}},
-    {SR_CMD_SING, SR_LANG_EN, 0, "sing a song", "SING A SONG", {NULL}},
+    /* English only */
+    {SR_CMD_LIGHT_ON, SR_LANG_EN, 0, "LIGHT ON", "LIGHT ON", {NULL}},
+    {SR_CMD_LIGHT_ON, SR_LANG_EN, 0, "TURN ON", "TURN ON", {NULL}},
+    {SR_CMD_LIGHT_ON, SR_LANG_EN, 0, "SWITCH ON", "SWITCH ON", {NULL}},
+    {SR_CMD_LIGHT_ON, SR_LANG_EN, 0, "TURN ON LIGHT", "TURN ON LIGHT", {NULL}},
+    {SR_CMD_LIGHT_ON, SR_LANG_EN, 0, "TURN LIGHT ON", "TURN LIGHT ON", {NULL}},
+    {SR_CMD_LIGHT_ON, SR_LANG_EN, 0, "SWITCH ON LIGHT", "SWITCH ON LIGHT",
+     {NULL}},
+    {SR_CMD_LIGHT_ON, SR_LANG_EN, 0, "LIGHTS ON", "LIGHTS ON", {NULL}},
+    {SR_CMD_LIGHT_OFF, SR_LANG_EN, 0, "LIGHT OFF", "LIGHT OFF", {NULL}},
+    {SR_CMD_LIGHT_OFF, SR_LANG_EN, 0, "TURN OFF", "TURN OFF", {NULL}},
+    {SR_CMD_LIGHT_OFF, SR_LANG_EN, 0, "SWITCH OFF", "SWITCH OFF", {NULL}},
+    {SR_CMD_LIGHT_OFF, SR_LANG_EN, 0, "TURN OFF LIGHT", "TURN OFF LIGHT",
+     {NULL}},
+    {SR_CMD_LIGHT_OFF, SR_LANG_EN, 0, "TURN LIGHT OFF", "TURN LIGHT OFF",
+     {NULL}},
+    {SR_CMD_LIGHT_OFF, SR_LANG_EN, 0, "SWITCH OFF LIGHT", "SWITCH OFF LIGHT",
+     {NULL}},
+    {SR_CMD_LIGHT_OFF, SR_LANG_EN, 0, "LIGHTS OFF", "LIGHTS OFF", {NULL}},
+    {SR_CMD_JOKE, SR_LANG_EN, 0, "TELL ME A JOKE", "TELL ME A JOKE", {NULL}},
+    {SR_CMD_SING, SR_LANG_EN, 0, "SING A SONG", "SING A SONG", {NULL}},
     {SR_CMD_ALPHABET,
      SR_LANG_EN,
      0,
-     "what is the alphabet",
-     "WAT IZ THE ALFABET",
+     "WHAT IS THE ALPHABET",
+     "WHAT IS THE ALPHABET",
      {NULL}},
-    {SR_CMD_WHO_ARE_YOU, SR_LANG_EN, 0, "who are you", "HOO AR YOO", {NULL}},
-    {SR_CMD_LOVE_YOU, SR_LANG_EN, 0, "i love you", "I LUV YOO", {NULL}},
-    {SR_CMD_STOP, SR_LANG_EN, 0, "stop", "STOP", {NULL}},
-    {SR_CMD_CLOSE, SR_LANG_EN, 0, "close", "KLOS", {NULL}},
-    {SR_CMD_HI_BRO, SR_LANG_EN, 0, "hi bro", "HI BRO", {NULL}},
+    {SR_CMD_WHO_ARE_YOU, SR_LANG_EN, 0, "WHO ARE YOU", "WHO ARE YOU", {NULL}},
+    {SR_CMD_LOVE_YOU, SR_LANG_EN, 0, "I LOVE YOU", "I LOVE YOU", {NULL}},
+    {SR_CMD_STOP, SR_LANG_EN, 0, "STOP", "STOP", {NULL}},
+    {SR_CMD_CLOSE, SR_LANG_EN, 0, "CLOSE", "CLOSE", {NULL}},
+    {SR_CMD_HI_BRO, SR_LANG_EN, 0, "HI BRO", "HI BRO", {NULL}},
     {SR_CMD_CHECK_SENSORS,
      SR_LANG_EN,
      0,
-     "check sensors",
-     "CHEK SENSORZ",
+     "CHECK SENSORS",
+     "CHECK SENSORS",
      {NULL}},
-    {SR_CMD_ROBOT_DANCE, SR_LANG_EN, 0, "robot dance", "ROBOT DANS", {NULL}},
-    {SR_CMD_CHANGE_MOOD, SR_LANG_EN, 0, "change mood", "CHANJ MOOD", {NULL}},
-    {SR_CMD_RAINBOW_MODE, SR_LANG_EN, 0, "rainbow mode", "RANBO MOD", {NULL}},
-    {SR_CMD_GO_PLAY, SR_LANG_EN, 0, "go play", "GO PLA", {NULL}},
+    {SR_CMD_ROBOT_DANCE, SR_LANG_EN, 0, "ROBOT DANCE", "ROBOT DANCE", {NULL}},
+    {SR_CMD_CHANGE_MOOD, SR_LANG_EN, 0, "CHANGE MOOD", "CHANGE MOOD", {NULL}},
+    {SR_CMD_RAINBOW_MODE, SR_LANG_EN, 0, "RAINBOW MODE", "RAINBOW MODE",
+     {NULL}},
+    {SR_CMD_GO_PLAY, SR_LANG_EN, 0, "GO PLAY", "GO PLAY", {NULL}},
 };
 
 static void audio_feed_task(void *arg) {
   size_t bytes_read = 0;
   esp_afe_sr_data_t *afe_data = (esp_afe_sr_data_t *)arg;
   int audio_chunksize = afe_handle->get_feed_chunksize(afe_data);
-  int feed_channel = 3;
-  size_t frame_bytes = (size_t)audio_chunksize * sizeof(int16_t) * feed_channel;
+  int feed_channel = afe_handle->get_total_channel_num(afe_data);
+  size_t i2s_frame_bytes =
+      (size_t)audio_chunksize * sizeof(int16_t) * SR_I2S_INPUT_CHANNELS;
   ESP_LOGI(TAG, "audio_feed_task: chunksize=%d, channel=%d", audio_chunksize,
            feed_channel);
 
@@ -153,14 +180,15 @@ static void audio_feed_task(void *arg) {
 #endif
 
   while (!sr_should_stop()) {
-    esp_err_t read_ret = bsp_i2s_read((char *)audio_buffer, frame_bytes, &bytes_read,
-                                      pdMS_TO_TICKS(100));
-    if (read_ret != ESP_OK || bytes_read != frame_bytes) {
+    esp_err_t read_ret = bsp_i2s_read((char *)audio_buffer, i2s_frame_bytes,
+                                      &bytes_read, pdMS_TO_TICKS(100));
+    bool full_frame = (bytes_read == i2s_frame_bytes);
+    if (bytes_read != i2s_frame_bytes || (read_ret != ESP_OK && !full_frame)) {
       static uint32_t short_read_cnt = 0;
       if ((short_read_cnt++ % 20U) == 0U) {
         ESP_LOGW(TAG, "i2s read mismatch ret=%s bytes=%u/%u",
                  esp_err_to_name(read_ret), (unsigned)bytes_read,
-                 (unsigned)frame_bytes);
+                 (unsigned)i2s_frame_bytes);
       }
 
       vTaskDelay(pdMS_TO_TICKS(1));
@@ -170,10 +198,15 @@ static void audio_feed_task(void *arg) {
       continue;
     }
 
-    /* Zero out buffer if audio is playing to prevent feedback loop (ghost
-     * triggers) */
+    for (int i = audio_chunksize - 1; i >= 0; i--) {
+      audio_buffer[i * 3 + 2] = 0;
+      audio_buffer[i * 3 + 1] = audio_buffer[i * 2 + 1];
+      audio_buffer[i * 3 + 0] = audio_buffer[i * 2 + 0];
+    }
+
+    /* Zero out buffer if audio is playing to prevent feedback loop (ghost triggers) */
     if (sr_echo_is_playing()) {
-      memset(audio_buffer, 0, frame_bytes);
+      memset(audio_buffer, 0, (size_t)audio_chunksize * sizeof(int16_t) * 3);
     }
 
     /* Feed audio data to AFE for processing */
@@ -225,6 +258,9 @@ static void audio_detect_task(void *arg) {
   esp_afe_sr_data_t *afe_data = (esp_afe_sr_data_t *)arg;
   bool wait_for_command = false;
   uint32_t loop_cnt = 0;
+  uint32_t fetch_fail_cnt = 0;
+  TickType_t last_wake_tick = 0;
+  TickType_t last_session_tick = 0;
 
 #if CONFIG_ESP_TASK_WDT_EN
   esp_task_wdt_add(NULL);
@@ -234,28 +270,97 @@ static void audio_detect_task(void *arg) {
 
     afe_fetch_result_t *res = afe_handle->fetch(afe_data);
     if (!res || res->ret_value == ESP_FAIL) {
-      ESP_LOGW(TAG, "AFE fetch error or no data");
+      if (!sr_echo_is_playing() &&
+          ((fetch_fail_cnt++ % SR_FETCH_WARN_THROTTLE) == 0U)) {
+        ESP_LOGW(TAG, "AFE fetch error or no data");
+      }
       vTaskDelay(pdMS_TO_TICKS(1));
 #if CONFIG_ESP_TASK_WDT_EN
       esp_task_wdt_reset();
 #endif
       continue;
     }
+    fetch_fail_cnt = 0;
 
-    if (res->wakeup_state == WAKENET_DETECTED || manul_detect_flag) {
+    bool wake_hit = (res->wakeup_state == WAKENET_DETECTED) ||
+                    (res->wakeup_state == WAKENET_CHANNEL_VERIFIED) ||
+                    manul_detect_flag;
+    TickType_t now_tick = xTaskGetTickCount();
+    bool wake_debounced = (last_wake_tick == 0) ||
+                          ((now_tick - last_wake_tick) >
+                           pdMS_TO_TICKS(SR_WAKE_DEBOUNCE_MS));
+    bool session_gap_ok = (last_session_tick == 0) ||
+                          ((now_tick - last_session_tick) >
+                           pdMS_TO_TICKS(SR_WAKE_SESSION_GAP_MS));
+    if (wake_hit && !wait_for_command && wake_debounced && session_gap_ok &&
+        !sr_echo_is_playing()) {
+      if (res->wakeup_state == WAKENET_CHANNEL_VERIFIED) {
+        ESP_LOGI(TAG, "Wakeup channel verified ch=%d", res->trigger_channel_id);
+      } else {
+        ESP_LOGI(TAG, "Wakeup state=%d", (int)res->wakeup_state);
+      }
       ESP_LOGI(TAG, "Wakeup detected%s (WakeID: %d)",
                manul_detect_flag ? " (Manual)" : "", res->wake_word_index);
+
       manul_detect_flag = false;
       wait_for_command = true;
+      last_wake_tick = now_tick;
+      if (g_sr_data->utterance_buf) {
+        taskENTER_CRITICAL(&s_utterance_lock);
+        g_sr_data->utterance_samples = 0;
+        taskEXIT_CRITICAL(&s_utterance_lock);
+      }
+
       sr_result_t result = {
           .wakenet_mode = WAKENET_DETECTED,
           .state = ESP_MN_STATE_DETECTING,
           .command_id = 0,
       };
       sr_result_queue_push(&result);
+
+      if (g_sr_data->multinet && g_sr_data->multinet->clean &&
+          g_sr_data->model_data) {
+        g_sr_data->multinet->clean(g_sr_data->model_data);
+      }
+      if (g_sr_data->afe_handle && g_sr_data->afe_handle->disable_wakenet) {
+        g_sr_data->afe_handle->disable_wakenet(afe_data);
+      }
     }
 
     if (wait_for_command && g_sr_data->model_data) {
+      if (sr_echo_is_playing()) {
+        vTaskDelay(pdMS_TO_TICKS(1));
+#if CONFIG_ESP_TASK_WDT_EN
+        esp_task_wdt_reset();
+#endif
+        continue;
+      }
+
+      if (res->data == NULL || res->data_size <= 0) {
+        vTaskDelay(pdMS_TO_TICKS(1));
+#if CONFIG_ESP_TASK_WDT_EN
+        esp_task_wdt_reset();
+#endif
+        continue;
+      }
+
+      if (g_sr_data->utterance_buf && res->data && res->data_size > 0 &&
+          res->vad_state == AFE_VAD_SPEECH) {
+        size_t in_samples = (size_t)res->data_size / sizeof(int16_t);
+        taskENTER_CRITICAL(&s_utterance_lock);
+        if (g_sr_data->utterance_samples < SR_UTTERANCE_MAX_SAMPLES) {
+          size_t free_samples =
+              SR_UTTERANCE_MAX_SAMPLES - g_sr_data->utterance_samples;
+          size_t cp_samples = (in_samples < free_samples) ? in_samples : free_samples;
+          if (cp_samples > 0) {
+            memcpy(g_sr_data->utterance_buf + g_sr_data->utterance_samples, res->data,
+                   cp_samples * sizeof(int16_t));
+            g_sr_data->utterance_samples += cp_samples;
+          }
+        }
+        taskEXIT_CRITICAL(&s_utterance_lock);
+      }
+
       esp_mn_state_t mn_state =
           g_sr_data->multinet->detect(g_sr_data->model_data, res->data);
 
@@ -282,7 +387,12 @@ static void audio_detect_task(void *arg) {
             .command_id = mn_res->command_id[0],
         };
         sr_result_queue_push(&result);
+        if (g_sr_data->afe_handle && g_sr_data->afe_handle->enable_wakenet) {
+          g_sr_data->afe_handle->enable_wakenet(afe_data);
+        }
         wait_for_command = false;
+        last_session_tick = xTaskGetTickCount();
+        last_wake_tick = last_session_tick;
       } else if (mn_state == ESP_MN_STATE_TIMEOUT) {
         sr_result_t result = {
             .wakenet_mode = WAKENET_NO_DETECT,
@@ -290,7 +400,12 @@ static void audio_detect_task(void *arg) {
             .command_id = 0,
         };
         sr_result_queue_push(&result);
+        if (g_sr_data->afe_handle && g_sr_data->afe_handle->enable_wakenet) {
+          g_sr_data->afe_handle->enable_wakenet(afe_data);
+        }
         wait_for_command = false;
+        last_session_tick = xTaskGetTickCount();
+        last_wake_tick = last_session_tick;
       }
     }
 
@@ -329,15 +444,29 @@ esp_err_t app_sr_set_language(sr_language_t new_lang) {
 
   char *mn_name = esp_srmodel_filter(models, ESP_MN_PREFIX,
                                      (new_lang == SR_LANG_EN) ? "en" : "cn");
+  ESP_RETURN_ON_FALSE(mn_name != NULL, ESP_FAIL, TAG,
+                      "Failed to find multinet model");
   esp_mn_iface_t *multinet = esp_mn_handle_from_name(mn_name);
+  ESP_RETURN_ON_FALSE(multinet != NULL, ESP_FAIL, TAG, "Failed to load multinet");
   model_iface_data_t *model_data = multinet->create(mn_name, 6000);
+  ESP_RETURN_ON_FALSE(model_data != NULL, ESP_FAIL, TAG,
+                      "Failed to create multinet model");
+
+  esp_err_t mn_alloc_ret = esp_mn_commands_alloc(multinet, model_data);
+  if (mn_alloc_ret != ESP_OK) {
+    multinet->destroy(model_data);
+    ESP_LOGE(TAG, "Failed to init speech command list");
+    return mn_alloc_ret;
+  }
 
   g_sr_data->lang = new_lang;
   g_sr_data->mn_name = mn_name;
   g_sr_data->multinet = multinet;
   g_sr_data->model_data = model_data;
 
-  app_sr_update_cmds();
+  esp_err_t cmd_ret = app_sr_update_cmds();
+  ESP_RETURN_ON_FALSE(cmd_ret == ESP_OK, cmd_ret, TAG,
+                      "Failed to update commands");
 
   return ESP_OK;
 }
@@ -360,6 +489,13 @@ esp_err_t app_sr_start(bool record_en) {
   g_sr_data->event_group = xEventGroupCreate();
   ESP_GOTO_ON_FALSE(NULL != g_sr_data->event_group, ESP_ERR_NO_MEM, err, TAG,
                     "Failed create event_group");
+
+  g_sr_data->utterance_buf = heap_caps_malloc(
+      SR_UTTERANCE_MAX_SAMPLES * sizeof(int16_t),
+      MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+  ESP_GOTO_ON_FALSE(NULL != g_sr_data->utterance_buf, ESP_ERR_NO_MEM, err, TAG,
+                    "Failed allocate utterance buffer");
+  g_sr_data->utterance_samples = 0;
 
   SLIST_INIT(&g_sr_data->cmd_list);
 
@@ -391,15 +527,14 @@ esp_err_t app_sr_start(bool record_en) {
   afe_config.wakenet_model_name =
       esp_srmodel_filter(models, ESP_WN_PREFIX, NULL);
   afe_config.aec_init = true;
-  afe_config.voice_communication_agc_init = true;
-  /* Slightly higher gain improves wake-word pickup while keeping
-     playback-masking + yielding protections for stability. */
-  afe_config.voice_communication_agc_gain = 12;
+  afe_config.voice_communication_agc_init = false;
+  afe_config.voice_communication_agc_gain = 15;
 
   /* Increased ringbuffer size to 300 to survive longer contentions */
   afe_config.afe_ringbuf_size = 300;
   afe_config.agc_mode = AFE_MN_PEAK_AGC_MODE_2;
-  /* Disabled voice processing to resolve conflict with wakenet_init */
+  afe_config.wakenet_mode = DET_MODE_2CH_95;
+  /* Keep voice communication path disabled for SR-only use. */
   afe_config.voice_communication_init = false;
   afe_config.wakenet_init = true;
 
@@ -502,6 +637,8 @@ esp_err_t app_sr_stop(void) {
     g_sr_data->afe_data = NULL;
   }
 
+  (void)esp_mn_commands_free();
+
   sr_cmd_t *it, *tmp_it;
   SLIST_FOREACH_SAFE(it, &g_sr_data->cmd_list, next, tmp_it) {
     SLIST_REMOVE(&g_sr_data->cmd_list, it, sr_cmd_t, next);
@@ -516,6 +653,12 @@ esp_err_t app_sr_stop(void) {
   if (g_sr_data->afe_out_buffer) {
     heap_caps_free(g_sr_data->afe_out_buffer);
     g_sr_data->afe_out_buffer = NULL;
+  }
+
+  if (g_sr_data->utterance_buf) {
+    heap_caps_free(g_sr_data->utterance_buf);
+    g_sr_data->utterance_buf = NULL;
+    g_sr_data->utterance_samples = 0;
   }
 
   heap_caps_free(g_sr_data);
@@ -540,7 +683,7 @@ esp_err_t app_sr_add_cmd(const sr_cmd_t *cmd) {
                       "pointer of cmd is invalid");
   ESP_RETURN_ON_FALSE(cmd->lang == g_sr_data->lang, ESP_ERR_INVALID_ARG, TAG,
                       "cmd lang error");
-  ESP_RETURN_ON_FALSE((uint16_t)ESP_MN_MAX_PHRASE_NUM >= g_sr_data->cmd_num,
+  ESP_RETURN_ON_FALSE((uint16_t)ESP_MN_MAX_PHRASE_NUM > g_sr_data->cmd_num,
                       ESP_ERR_INVALID_STATE, TAG, "cmd is full");
 
   sr_cmd_t *item = (sr_cmd_t *)heap_caps_calloc(
@@ -548,16 +691,22 @@ esp_err_t app_sr_add_cmd(const sr_cmd_t *cmd) {
   ESP_RETURN_ON_FALSE(NULL != item, ESP_ERR_NO_MEM, TAG,
                       "memory for sr cmd is not enough");
   memcpy(item, cmd, sizeof(sr_cmd_t));
-  item->id = g_sr_data->cmd_num;
+  item->id = g_sr_data->cmd_num + 1;
+
+  esp_err_t mn_ret = ESP_FAIL;
+  if (strstr(g_sr_data->mn_name, "mn6_en")) {
+    mn_ret = esp_mn_commands_add(item->id, (char *)cmd->str);
+  } else {
+    mn_ret = esp_mn_commands_add(item->id, (char *)cmd->phoneme);
+  }
+  if (mn_ret != ESP_OK) {
+    ESP_LOGW(TAG, "Skip unsupported SR command: %s", cmd->str);
+    heap_caps_free(item);
+    return mn_ret;
+  }
 
   /* Use standard SLIST insert head */
   SLIST_INSERT_HEAD(&g_sr_data->cmd_list, item, next);
-
-  if (strstr(g_sr_data->mn_name, "mn6_en")) {
-    esp_mn_commands_add(g_sr_data->cmd_num, (char *)cmd->str);
-  } else {
-    esp_mn_commands_add(g_sr_data->cmd_num, (char *)cmd->phoneme);
-  }
   g_sr_data->cmd_num++;
   return ESP_OK;
 }
@@ -567,8 +716,8 @@ esp_err_t app_sr_modify_cmd(uint32_t id, const sr_cmd_t *cmd) {
                       "SR is not running");
   ESP_RETURN_ON_FALSE(NULL != cmd, ESP_ERR_INVALID_ARG, TAG,
                       "pointer of cmd is invalid");
-  ESP_RETURN_ON_FALSE(id < g_sr_data->cmd_num, ESP_ERR_INVALID_ARG, TAG,
-                      "cmd id out of range");
+  ESP_RETURN_ON_FALSE((id > 0) && (id <= g_sr_data->cmd_num), ESP_ERR_INVALID_ARG,
+                      TAG, "cmd id out of range");
   ESP_RETURN_ON_FALSE(cmd->lang == g_sr_data->lang, ESP_ERR_INVALID_ARG, TAG,
                       "cmd lang error");
 
@@ -585,7 +734,9 @@ esp_err_t app_sr_modify_cmd(uint32_t id, const sr_cmd_t *cmd) {
       /* Keep the links when copying - standard SLIST doesn't need to save next
        * manually if we just copy data */
       sr_cmd_t *saved_next = SLIST_NEXT(it, next);
+      uint32_t saved_id = it->id;
       memcpy(it, cmd, sizeof(sr_cmd_t));
+      it->id = saved_id;
       SLIST_NEXT(it, next) = saved_next;
       break;
     }
@@ -597,8 +748,8 @@ esp_err_t app_sr_modify_cmd(uint32_t id, const sr_cmd_t *cmd) {
 esp_err_t app_sr_remove_cmd(uint32_t id) {
   ESP_RETURN_ON_FALSE(NULL != g_sr_data, ESP_ERR_INVALID_STATE, TAG,
                       "SR is not running");
-  ESP_RETURN_ON_FALSE(id < g_sr_data->cmd_num, ESP_ERR_INVALID_ARG, TAG,
-                      "cmd id out of range");
+  ESP_RETURN_ON_FALSE((id > 0) && (id <= g_sr_data->cmd_num), ESP_ERR_INVALID_ARG,
+                      TAG, "cmd id out of range");
 
   sr_cmd_t *it, *tmp_it;
   SLIST_FOREACH_SAFE(it, &g_sr_data->cmd_list, next, tmp_it) {
@@ -636,19 +787,37 @@ esp_err_t app_sr_update_cmds(void) {
 
   const sr_cmd_t *cmd_info = g_default_cmd_info;
   size_t cmd_count = sizeof(g_default_cmd_info) / sizeof(g_default_cmd_info[0]);
+  size_t skipped = 0;
   for (size_t i = 0; i < cmd_count; i++) {
     if (cmd_info[i].lang == g_sr_data->lang) {
-      app_sr_add_cmd(&cmd_info[i]);
+      if (app_sr_add_cmd(&cmd_info[i]) != ESP_OK) {
+        skipped++;
+      }
     }
   }
 
+  esp_mn_error_t *mn_err = esp_mn_commands_update();
+  if (mn_err != NULL && mn_err->num > 0) {
+    ESP_LOGW(TAG, "MN rejected %d phrases during update", mn_err->num);
+    for (int i = 0; i < mn_err->num; i++) {
+      if (mn_err->phrases[i] && mn_err->phrases[i]->string) {
+        ESP_LOGW(TAG, "Rejected phrase: %s", mn_err->phrases[i]->string);
+      }
+    }
+  }
+  if (g_sr_data->multinet && g_sr_data->multinet->print_active_speech_commands) {
+    g_sr_data->multinet->print_active_speech_commands(g_sr_data->model_data);
+  }
+
+  ESP_LOGI(TAG, "SR commands loaded: active=%u skipped=%u",
+           (unsigned)g_sr_data->cmd_num, (unsigned)skipped);
+  ESP_RETURN_ON_FALSE(g_sr_data->cmd_num > 0, ESP_FAIL, TAG,
+                      "No valid SR command available");
   return ESP_OK;
 }
 
 const sr_cmd_t *app_sr_get_cmd_from_id(uint32_t id) {
   ESP_RETURN_ON_FALSE(NULL != g_sr_data, NULL, TAG, "SR is not running");
-  ESP_RETURN_ON_FALSE(id < g_sr_data->cmd_num, NULL, TAG,
-                      "cmd id out of range");
 
   sr_cmd_t *it;
   SLIST_FOREACH(it, &g_sr_data->cmd_list, next) {
@@ -696,4 +865,21 @@ uint8_t app_sr_search_cmd_from_phoneme(const char *phoneme, uint8_t *id_list,
   }
 
   return count;
+}
+
+size_t app_sr_copy_last_utterance(int16_t *dst, size_t max_samples) {
+  if (g_sr_data == NULL || g_sr_data->utterance_buf == NULL || dst == NULL ||
+      max_samples == 0) {
+    return 0;
+  }
+
+  size_t copied = 0;
+  taskENTER_CRITICAL(&s_utterance_lock);
+  size_t available = g_sr_data->utterance_samples;
+  copied = (available < max_samples) ? available : max_samples;
+  if (copied > 0) {
+    memcpy(dst, g_sr_data->utterance_buf, copied * sizeof(int16_t));
+  }
+  taskEXIT_CRITICAL(&s_utterance_lock);
+  return copied;
 }

@@ -26,8 +26,10 @@
 #include "light_ui.h"
 #include "nvs_flash.h"
 #include <math.h>
+#include <stdbool.h>
 
 static const char *TAG = "main";
+static volatile bool s_ui_ready = false;
 
 static void sensor_task(void *arg) {
   float temp = 0, hum = 0;
@@ -73,6 +75,7 @@ static void after_boot(void) {
   ESP_ERROR_CHECK(fan_ui_start());
   fan_ui_update(fan_ctrl_get_power(), fan_ctrl_get_speed());
   ui_sr_anim_init();
+  s_ui_ready = true;
 }
 
 void app_main(void) {
@@ -125,7 +128,15 @@ void app_main(void) {
   vTaskDelay(pdMS_TO_TICKS(500));
   bsp_display_backlight_on();
 
-  vTaskDelay(pdMS_TO_TICKS(1500));
+  for (int wait_idx = 0; wait_idx < 150; wait_idx++) {
+    if (s_ui_ready) {
+      break;
+    }
+    vTaskDelay(pdMS_TO_TICKS(100));
+  }
+  if (!s_ui_ready) {
+    ESP_LOGW(TAG, "UI boot callback timeout, starting SR anyway");
+  }
   ESP_ERROR_CHECK(app_sr_start(false));
 
   // Initialize Sensor Dock after SR is running
