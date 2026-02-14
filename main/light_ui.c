@@ -12,6 +12,7 @@
 
 #include "app_status.h"
 #include "bsp/esp-bsp.h"
+#include "fan_ui.h"
 #include "light_ctrl.h"
 #include "lvgl.h"
 
@@ -167,6 +168,16 @@ static void on_back_click(lv_event_t *e) {
   lv_scr_load(s_scr_main);
 }
 
+static void on_fan_click(lv_event_t *e) {
+  (void)e;
+  fan_ui_show_fan_screen();
+}
+
+static void on_sensor_click(lv_event_t *e) {
+  (void)e;
+  fan_ui_show_sensor_screen();
+}
+
 static void update_status_timer_cb(lv_timer_t *timer) {
   if (lv_scr_act() != s_scr_status)
     return;
@@ -204,7 +215,23 @@ static void create_status_screen(void) {
   s_label_info = lv_label_create(s_scr_status);
   lv_label_set_recolor(s_label_info, true);
   lv_obj_set_width(s_label_info, 280);
-  lv_obj_align(s_label_info, LV_ALIGN_CENTER, 0, 20);
+  lv_obj_align(s_label_info, LV_ALIGN_CENTER, 0, -10);
+
+  lv_obj_t *btn_fan = lv_btn_create(s_scr_status);
+  lv_obj_set_size(btn_fan, 120, 38);
+  lv_obj_align(btn_fan, LV_ALIGN_BOTTOM_LEFT, 16, -18);
+  lv_obj_add_event_cb(btn_fan, on_fan_click, LV_EVENT_CLICKED, NULL);
+  lv_obj_t *label_fan = lv_label_create(btn_fan);
+  lv_label_set_text(label_fan, "Fan Screen");
+  lv_obj_center(label_fan);
+
+  lv_obj_t *btn_sensor = lv_btn_create(s_scr_status);
+  lv_obj_set_size(btn_sensor, 120, 38);
+  lv_obj_align(btn_sensor, LV_ALIGN_BOTTOM_RIGHT, -16, -18);
+  lv_obj_add_event_cb(btn_sensor, on_sensor_click, LV_EVENT_CLICKED, NULL);
+  lv_obj_t *label_sensor = lv_label_create(btn_sensor);
+  lv_label_set_text(label_sensor, "Sensor Screen");
+  lv_obj_center(label_sensor);
 
   s_status_timer = lv_timer_create(update_status_timer_cb, 1000, NULL);
 }

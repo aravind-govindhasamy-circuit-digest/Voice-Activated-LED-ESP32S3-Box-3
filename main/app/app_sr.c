@@ -392,10 +392,9 @@ esp_err_t app_sr_start(bool record_en) {
       esp_srmodel_filter(models, ESP_WN_PREFIX, NULL);
   afe_config.aec_init = true;
   afe_config.voice_communication_agc_init = true;
-  /* Reduced gain to 8.
-     The user reported "ghost" triggers (timeout loop).
-     Lower gain + AEC + playback suppression should break the loop. */
-  afe_config.voice_communication_agc_gain = 8;
+  /* Slightly higher gain improves wake-word pickup while keeping
+     playback-masking + yielding protections for stability. */
+  afe_config.voice_communication_agc_gain = 12;
 
   /* Increased ringbuffer size to 300 to survive longer contentions */
   afe_config.afe_ringbuf_size = 300;
@@ -549,6 +548,7 @@ esp_err_t app_sr_add_cmd(const sr_cmd_t *cmd) {
   ESP_RETURN_ON_FALSE(NULL != item, ESP_ERR_NO_MEM, TAG,
                       "memory for sr cmd is not enough");
   memcpy(item, cmd, sizeof(sr_cmd_t));
+  item->id = g_sr_data->cmd_num;
 
   /* Use standard SLIST insert head */
   SLIST_INSERT_HEAD(&g_sr_data->cmd_list, item, next);
