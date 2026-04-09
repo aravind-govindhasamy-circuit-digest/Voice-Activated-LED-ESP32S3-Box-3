@@ -16,8 +16,8 @@
 #include "app/fan_ctrl.h"
 #include "app_mqtt.h"
 #include "app_sensor.h"
-#include "app_status.h"
 #include "app_sr.h"
+#include "app_status.h"
 #include "app_wifi.h"
 #include "fan_ui.h"
 #include "gui/ui_boot_animate.h"
@@ -27,6 +27,7 @@
 #include "nvs_flash.h"
 #include <math.h>
 #include <stdbool.h>
+
 
 static const char *TAG = "main";
 static volatile bool s_ui_ready = false;
@@ -145,6 +146,8 @@ void app_main(void) {
 
   /* WiFi and MQTT */
   if (app_wifi_init() == ESP_OK) {
+    ESP_LOGI(TAG, "WiFi connected, waiting for network stabilization...");
+    vTaskDelay(pdMS_TO_TICKS(2000));
     app_mqtt_init();
     xTaskCreate(sensor_task, "sensor_task", 4096, NULL, 5, NULL);
   }

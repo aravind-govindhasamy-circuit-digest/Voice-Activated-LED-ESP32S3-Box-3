@@ -31,34 +31,28 @@ menu "Project Configuration"
         help
             Password for MQTT broker authentication.
 
-    config EXAMPLE_MQTT_TOPIC_SET
-        string "MQTT Set Topic"
-        default "devices/box/light/set"
+    config EXAMPLE_MQTT_USER_ID
+        string "MQTT User ID"
+        default "16e6f1d6-9ac5-4825-bec0-c79107d09490"
         help
-            MQTT topic to listen for light control commands (on/off).
+            User ID for topic structure (cd/users/16e6.../devices/...).
 
-    config EXAMPLE_MQTT_TOPIC_STATE
-        string "MQTT State Topic"
-        default "devices/box/light/state"
+    config EXAMPLE_MQTT_DEVICE_ID
+        string "MQTT Device ID"
+        default "CD_BOX_3_V1"
         help
-            MQTT topic to publish current light state.
+            Device ID for topic structure and username.
 
-    config EXAMPLE_MQTT_TOPIC_TEMP
-        string "MQTT Temp Topic"
-        default "devices/box/sensor/temperature"
+    config EXAMPLE_MQTT_CLIENT_ID
+        string "MQTT Client ID"
+        default "32ea3b2c-1c49-4fcc-87d9-db8c11148574"
         help
-            MQTT topic to publish temperature data.
+            Client ID for MQTT connection.
 
-    config EXAMPLE_MQTT_TOPIC_HUM
-        string "MQTT Humidity Topic"
-        default "devices/box/sensor/humidity"
+    config EXAMPLE_MQTT_PORT
+        int "MQTT Port"
+        default 1883
         help
-            MQTT topic to publish humidity data.
-
-    config EXAMPLE_MQTT_TOPIC_PRESENCE
-        string "MQTT Presence Topic"
-        default "devices/box/sensor/presence"
-        help
-            MQTT topic to publish presence status.
+            Port of the MQTT broker.
 
 endmenu

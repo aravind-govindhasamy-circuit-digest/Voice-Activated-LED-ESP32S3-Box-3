@@ -57,7 +57,8 @@ static esp_err_t sr_codec_prepare(int sample_rate, int bits_per_sample) {
   /* Keep SR path fixed at 16k/16 to avoid runtime I2S channel re-init, which
      can stall AFE feed and trigger rb_in slow loops. */
   if (sample_rate != 16000 || bits_per_sample != 16) {
-    ESP_LOGW(TAG, "Unexpected prompt format %dHz/%dbit, playing without reconfig",
+    ESP_LOGW(TAG,
+             "Unexpected prompt format %dHz/%dbit, playing without reconfig",
              sample_rate, bits_per_sample);
   }
 
@@ -203,8 +204,8 @@ static esp_err_t sr_echo_play(audio_segment_t seg) {
   for (size_t offset = 0; offset < len; offset += chunk_size) {
     size_t to_write = (len - offset > chunk_size) ? chunk_size : (len - offset);
     size_t written = 0;
-    esp_err_t write_ret =
-        bsp_i2s_write((char *)(p + offset), to_write, &written, pdMS_TO_TICKS(200));
+    esp_err_t write_ret = bsp_i2s_write((char *)(p + offset), to_write,
+                                        &written, pdMS_TO_TICKS(200));
     if (write_ret != ESP_OK) {
       ESP_LOGW(TAG, "sr_echo_play(%d): write failed ret=%s", seg,
                esp_err_to_name(write_ret));
@@ -242,22 +243,39 @@ static esp_err_t sr_echo_repeat_last_utterance(void) {
   size_t total_bytes = 0;
   s_audio_playing = true;
 
-  for (size_t offset = 0; offset < sample_count; offset += SR_REPEAT_CHUNK_SAMPLES) {
+  for (size_t offset = 0; offset < sample_count;
+       offset += SR_REPEAT_CHUNK_SAMPLES) {
     size_t this_samples = sample_count - offset;
     if (this_samples > SR_REPEAT_CHUNK_SAMPLES) {
       this_samples = SR_REPEAT_CHUNK_SAMPLES;
     }
 
     for (size_t i = 0; i < this_samples; i++) {
-      int16_t s = s_repeat_buf[offset + i];
+      int16_t raw_s = s_repeat_buf[offset + i];
+      int32_t boosted;
+
+      // Noise gate: if sample is very quiet, don't boost it
+      if (abs(raw_s) < 150) {
+        boosted = 0;
+      } else {
+        boosted = (int32_t)((float)raw_s * 2.5f);
+      }
+
+      // Clipping protection
+      if (boosted > 32767)
+        boosted = 32767;
+      if (boosted < -32768)
+        boosted = -32768;
+
+      int16_t s = (int16_t)boosted;
       stereo_buf[i * 2] = s;
       stereo_buf[i * 2 + 1] = s;
     }
 
     size_t to_write = this_samples * sizeof(int16_t) * 2;
     size_t written = 0;
-    esp_err_t write_ret =
-        bsp_i2s_write((char *)stereo_buf, to_write, &written, pdMS_TO_TICKS(200));
+    esp_err_t write_ret = bsp_i2s_write((char *)stereo_buf, to_write, &written,
+                                        pdMS_TO_TICKS(200));
     if (write_ret != ESP_OK) {
       ESP_LOGW(TAG, "Repeat write failed ret=%s", esp_err_to_name(write_ret));
       break;
@@ -379,8 +397,7 @@ void sr_handler_task(void *pvParam) {
       }
 
       bool repeated = false;
-      if (s_repeat_mode &&
-          (cmd == NULL || cmd->cmd != SR_CMD_GO_PLAY)) {
+      if (s_repeat_mode && (cmd == NULL || cmd->cmd != SR_CMD_GO_PLAY)) {
         repeated = (sr_echo_repeat_last_utterance() == ESP_OK);
       }
       if (!repeated) {
