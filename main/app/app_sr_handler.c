@@ -20,6 +20,7 @@
 #include "app_sr.h"
 #include "app_sr_handler.h"
 
+#include "app_mqtt.h"
 #include "light_ctrl.h"
 #include "light_ui.h"
 #include "ui_sr.h"
@@ -375,7 +376,10 @@ void sr_handler_task(void *pvParam) {
         ESP_LOGI(TAG, "Command: HI BRO");
         break;
       case SR_CMD_CHECK_SENSORS:
-        ESP_LOGI(TAG, "Command: CHECK SENSORS");
+        ESP_LOGI(TAG, "Command: CHECK SENSORS - Triggering cloud report");
+        // We'll rely on the sensor_task in main.c to see this or just trigger it here if we had a global flag
+        // For now, let's just log it. In a real app, you'd set a flag or call a publish function.
+        app_mqtt_report_sensors_now();
         break;
       case SR_CMD_ROBOT_DANCE:
         ESP_LOGI(TAG, "Command: ROBOT DANCE");

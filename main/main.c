@@ -40,33 +40,44 @@ static void sensor_task(void *arg) {
   uint32_t last_publish_time = 0;
 
   while (1) {
-    if (app_sensor_get_values(&temp, &hum) == ESP_OK) {
-      presence = app_sensor_get_presence();
-      app_status_update_sensor(temp, hum, presence);
-      uint32_t now = xTaskGetTickCount();
+    // Read presence
+    presence = app_sensor_get_presence();
+    
+    // Attempt to read temp/hum
+    esp_err_t env_err = app_sensor_get_values(&temp, &hum);
+    
+    app_status_update_sensor(temp, hum, presence);
+    uint32_t now = xTaskGetTickCount();
 
-      // Check for significant changes
-      bool changed = false;
-      if (presence != last_presence) {
+    // Check for significant changes
+    bool changed = false;
+    if (presence != last_presence) {
+      changed = true;
+    } else if (env_err == ESP_OK) {
+      if (fabs(temp - last_temp) > 0.5f || fabs(hum - last_hum) > 2.0f) {
         changed = true;
-      } else if (fabs(temp - last_temp) > 0.5f) {
-        changed = true;
-      } else if (fabs(hum - last_hum) > 2.0f) {
-        changed = true;
-      }
-
-      // Heartbeat: Publish at least every 60 seconds regardless of change
-      bool heartbeat = (now - last_publish_time) > pdMS_TO_TICKS(60000);
-
-      if (changed || heartbeat) {
-        app_mqtt_publish_sensor_data(temp, hum, presence);
-        last_temp = temp;
-        last_hum = hum;
-        last_presence = presence;
-        last_publish_time = now;
       }
     }
-    vTaskDelay(pdMS_TO_TICKS(1000)); // Poll every second for responsiveness
+
+    // Heartbeat: Publish at least every 30 seconds regardless of change
+    bool heartbeat = (now - last_publish_time) > pdMS_TO_TICKS(30000);
+
+    if (changed || heartbeat) {
+      // Always publish all data fields to ensure the dashboard stays updated
+      app_mqtt_publish_sensor_data(temp, hum, presence);
+      
+      if (env_err == ESP_OK) {
+        last_temp = temp;
+        last_hum = hum;
+      }
+      last_presence = presence;
+      last_publish_time = now;
+      app_status_update_sensor(temp, hum, presence);
+    }
+    
+    // Update UI status
+    app_status_update_mqtt(app_mqtt_is_connected());
+    vTaskDelay(pdMS_TO_TICKS(1000)); // Poll every second
   }
 }
 

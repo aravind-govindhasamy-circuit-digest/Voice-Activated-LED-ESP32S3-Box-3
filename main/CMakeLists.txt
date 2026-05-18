@@ -36,6 +36,16 @@ idf_component_register(
         "gui"
         "gui/font"
         "gui/image"
+    REQUIRES
+        lwip
+        json
+    PRIV_REQUIRES
+        espressif__esp-box-3
+        bsp
+        esp_wifi
+        esp_event
+        esp_netif
+        nvs_flash
 )
 
 target_compile_options(${COMPONENT_LIB} PRIVATE "-Wno-format" "-Wno-deprecated-declarations")

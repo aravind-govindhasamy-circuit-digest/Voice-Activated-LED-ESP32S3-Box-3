@@ -91,6 +91,15 @@ esp_err_t app_wifi_init(void) {
   ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
   ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wifi_config));
   ESP_ERROR_CHECK(esp_wifi_start());
+  esp_wifi_set_ps(WIFI_PS_NONE);
+
+  wifi_country_t country = {
+      .cc = "IN",
+      .schan = 1,
+      .nchan = 13,
+      .policy = WIFI_COUNTRY_POLICY_AUTO,
+  };
+  esp_wifi_set_country(&country);
 
   ESP_LOGI(TAG, "wifi_init_sta finished.");
 

@@ -158,10 +158,9 @@ static void mqtt_sync_cb(lv_event_t *e) {
   float h = 0;
   bool presence = app_sensor_get_presence();
 
-  if (app_sensor_get_values(&t, &h) == ESP_OK) {
-    app_status_update_sensor(t, h, presence);
-    (void)app_mqtt_publish_sensor_data(t, h, presence);
-  }
+  app_sensor_get_values(&t, &h);
+  app_status_update_sensor(t, h, presence);
+  app_mqtt_report_sensors_now();
 
   (void)app_mqtt_publish_state(light_ctrl_get());
   (void)app_mqtt_publish_fan_state(fan_ctrl_get_power(), fan_ctrl_get_speed());

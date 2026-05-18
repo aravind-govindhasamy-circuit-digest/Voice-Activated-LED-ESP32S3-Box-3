@@ -221,7 +221,7 @@ static void audio_feed_task(void *arg) {
         rms += sample * sample;
       }
       rms = sqrtf(rms / audio_chunksize);
-      ESP_LOGI(TAG, "Audio In RMS: %.2f (Mic1: %d)", rms, audio_buffer[0]);
+      // ESP_LOGI(TAG, "Audio In RMS: %.2f (Mic1: %d)", rms, audio_buffer[0]);
     }
 
 #if CONFIG_ESP_TASK_WDT_EN

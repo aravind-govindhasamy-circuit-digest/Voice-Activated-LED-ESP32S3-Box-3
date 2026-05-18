@@ -46,3 +46,4 @@ esp_err_t app_mqtt_publish_fan_state(bool on, uint8_t speed);
  * @return true if connected.
  */
 bool app_mqtt_is_connected(void);
+void app_mqtt_report_sensors_now(void);

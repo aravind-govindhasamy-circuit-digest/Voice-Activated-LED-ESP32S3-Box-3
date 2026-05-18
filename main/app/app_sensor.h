@@ -19,6 +19,7 @@ esp_err_t app_sensor_init(void);
  * @return esp_err_t ESP_OK on success
  */
 esp_err_t app_sensor_get_values(float *temp, float *hum);
+esp_err_t app_sensor_get_imu(float *ax, float *ay, float *az, float *gx, float *gy, float *gz);
 
 /**
  * @brief Get illuminance from BH1750
