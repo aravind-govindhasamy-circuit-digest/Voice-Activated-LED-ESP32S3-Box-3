@@ -13,6 +13,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "lwip/dns.h"
+
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 #include "freertos/task.h"
@@ -36,7 +38,7 @@
 static const char *TAG = "app_mqtt";
 
 /* ── Broker settings ───────────────────────────────────────────────────────── */
-#define MQTT_HOST           "circuitdigest.cloud"
+#define MQTT_HOST           "mqtt.circuitdigest.cloud"
 #define MQTT_PORT           1883
 #define MQTT_KEEPALIVE_SEC  60          /* broker keepalive (seconds)          */
 #define MQTT_PING_INTERVAL  30          /* send PINGREQ every 30 s             */
@@ -292,6 +294,11 @@ static int tcp_connect_to_broker(void)
 
     char port_str[8];
     snprintf(port_str, sizeof(port_str), "%d", MQTT_PORT);
+
+    /* Force Google public DNS to bypass router DNS failures */
+    ip_addr_t dns8;
+    ipaddr_aton("8.8.8.8", &dns8);
+    dns_setserver(0, &dns8);
 
     ESP_LOGI(TAG, "Resolving host: %s", MQTT_HOST);
     int err = getaddrinfo(MQTT_HOST, port_str, &hints, &res);
