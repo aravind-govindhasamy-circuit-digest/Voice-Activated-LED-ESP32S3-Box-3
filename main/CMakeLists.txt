@@ -4,6 +4,7 @@ set(SRC_FILES
     "light_ctrl.c"
     "light_ui.c"
     "fan_ui.c"
+    "machi_images.c"
 
     "app/app_led.c"
     "app/app_sr.c"
