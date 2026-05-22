@@ -153,6 +153,10 @@ static const sr_cmd_t g_default_cmd_info[] = {
     {SR_CMD_CHANGE_MOOD, SR_LANG_EN, 0, "CHANGE MOOD", "CHANGE MOOD", {NULL}},
     {SR_CMD_RAINBOW_MODE, SR_LANG_EN, 0, "RAINBOW MODE", "RAINBOW MODE",
      {NULL}},
+    {SR_CMD_AC_ON, SR_LANG_EN, 0, "AC ON", "AC ON", {NULL}},
+    {SR_CMD_AC_ON, SR_LANG_EN, 0, "TURN ON AC", "TURN ON AC", {NULL}},
+    {SR_CMD_AC_OFF, SR_LANG_EN, 0, "AC OFF", "AC OFF", {NULL}},
+    {SR_CMD_AC_OFF, SR_LANG_EN, 0, "TURN OFF AC", "TURN OFF AC", {NULL}},
     {SR_CMD_GO_PLAY, SR_LANG_EN, 0, "GO PLAY", "GO PLAY", {NULL}},
 };
 

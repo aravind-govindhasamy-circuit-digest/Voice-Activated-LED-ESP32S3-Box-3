@@ -13,6 +13,7 @@
 #include "app_status.h"
 #include "bsp/esp-bsp.h"
 #include "fan_ui.h"
+#include "ac_ui.h"
 #include "light_ctrl.h"
 #include "lvgl.h"
 
@@ -173,6 +174,11 @@ static void on_fan_click(lv_event_t *e) {
   fan_ui_show_fan_screen();
 }
 
+static void on_ac_click(lv_event_t *e) {
+  (void)e;
+  ac_ui_show_screen();
+}
+
 static void on_sensor_click(lv_event_t *e) {
   (void)e;
   fan_ui_show_sensor_screen();
@@ -217,20 +223,31 @@ static void create_status_screen(void) {
   lv_obj_set_width(s_label_info, 280);
   lv_obj_align(s_label_info, LV_ALIGN_CENTER, 0, -10);
 
+  // Bottom Nav Button 1: Fan Screen
   lv_obj_t *btn_fan = lv_btn_create(s_scr_status);
-  lv_obj_set_size(btn_fan, 120, 38);
-  lv_obj_align(btn_fan, LV_ALIGN_BOTTOM_LEFT, 16, -18);
+  lv_obj_set_size(btn_fan, 92, 38);
+  lv_obj_align(btn_fan, LV_ALIGN_BOTTOM_LEFT, 10, -18);
   lv_obj_add_event_cb(btn_fan, on_fan_click, LV_EVENT_CLICKED, NULL);
   lv_obj_t *label_fan = lv_label_create(btn_fan);
-  lv_label_set_text(label_fan, "Fan Screen");
+  lv_label_set_text(label_fan, "Machi");
   lv_obj_center(label_fan);
 
+  // Bottom Nav Button 2: AC Screen
+  lv_obj_t *btn_ac = lv_btn_create(s_scr_status);
+  lv_obj_set_size(btn_ac, 92, 38);
+  lv_obj_align(btn_ac, LV_ALIGN_BOTTOM_MID, 0, -18);
+  lv_obj_add_event_cb(btn_ac, on_ac_click, LV_EVENT_CLICKED, NULL);
+  lv_obj_t *label_ac = lv_label_create(btn_ac);
+  lv_label_set_text(label_ac, "AC");
+  lv_obj_center(label_ac);
+
+  // Bottom Nav Button 3: Sensor Screen
   lv_obj_t *btn_sensor = lv_btn_create(s_scr_status);
-  lv_obj_set_size(btn_sensor, 120, 38);
-  lv_obj_align(btn_sensor, LV_ALIGN_BOTTOM_RIGHT, -16, -18);
+  lv_obj_set_size(btn_sensor, 92, 38);
+  lv_obj_align(btn_sensor, LV_ALIGN_BOTTOM_RIGHT, -10, -18);
   lv_obj_add_event_cb(btn_sensor, on_sensor_click, LV_EVENT_CLICKED, NULL);
   lv_obj_t *label_sensor = lv_label_create(btn_sensor);
-  lv_label_set_text(label_sensor, "Sensor Screen");
+  lv_label_set_text(label_sensor, "Sensors");
   lv_obj_center(label_sensor);
 
   s_status_timer = lv_timer_create(update_status_timer_cb, 1000, NULL);
@@ -272,6 +289,22 @@ esp_err_t light_ui_start(void) {
 
   bsp_display_unlock();
   return ESP_OK;
+}
+
+void light_ui_show_main_screen(void) {
+  bsp_display_lock(0);
+  if (s_scr_main) {
+    lv_scr_load(s_scr_main);
+  }
+  bsp_display_unlock();
+}
+
+void light_ui_show_status_screen(void) {
+  bsp_display_lock(0);
+  if (s_scr_status) {
+    lv_scr_load(s_scr_status);
+  }
+  bsp_display_unlock();
 }
 
 void light_ui_set(bool on) {

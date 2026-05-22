@@ -9,6 +9,7 @@
 #include "light_ctrl.h"
 #include "lvgl.h"
 #include "machi_images.h"
+#include "light_ui.h"
 
 #include <stdint.h>
 #include <stdio.h>
@@ -105,6 +106,11 @@ static void status_timer_cb(lv_timer_t *timer) {
     }
 }
 
+static void on_back_click(lv_event_t *e) {
+    (void)e;
+    light_ui_show_status_screen();
+}
+
 static void create_machi_screen(void) {
     s_scr_main = lv_obj_create(NULL);
     lv_obj_set_style_bg_color(s_scr_main, lv_color_hex(0x1B1F2A), 0);
@@ -114,17 +120,21 @@ static void create_machi_screen(void) {
     lv_obj_add_flag(s_scr_main, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_add_event_cb(s_scr_main, on_touch_cb, LV_EVENT_CLICKED, NULL);
 
-<<<<<<< HEAD
-  app_sensor_get_values(&t, &h);
-  app_status_update_sensor(t, h, presence);
-  app_mqtt_report_sensors_now();
-=======
+    // Back Button to exit Machi screen
+    lv_obj_t *btn_back = lv_btn_create(s_scr_main);
+    lv_obj_set_size(btn_back, 70, 35);
+    lv_obj_align(btn_back, LV_ALIGN_TOP_LEFT, 10, 10);
+    lv_obj_set_style_bg_color(btn_back, lv_color_hex(0x334155), 0);
+    lv_obj_add_event_cb(btn_back, on_back_click, LV_EVENT_CLICKED, NULL);
+    lv_obj_t *label_back = lv_label_create(btn_back);
+    lv_label_set_text(label_back, "Back");
+    lv_obj_center(label_back);
+
     // Title
     s_title = lv_label_create(s_scr_main);
     lv_label_set_text(s_title, "Machi Buddy");
     lv_obj_set_style_text_color(s_title, lv_color_hex(0xCBD6E2), 0);
     lv_obj_align(s_title, LV_ALIGN_TOP_MID, 0, 10);
->>>>>>> f5ce320b655c540573ac1fecbb98c40a3259ec58
 
     // Image for eyes/face
     s_face_img = lv_img_create(s_scr_main);
@@ -145,6 +155,7 @@ static void create_machi_screen(void) {
 }
 
 esp_err_t fan_ui_start(void) {
+    ESP_LOGI(TAG, "Starting Machi screen");
     bsp_display_lock(0);
 
     if (s_scr_main) {
@@ -153,7 +164,7 @@ esp_err_t fan_ui_start(void) {
     }
 
     create_machi_screen();
-    lv_scr_load(s_scr_main);
+    // lv_scr_load(s_scr_main); // Do not load Machi screen on startup
 
     if (!s_status_timer) {
         s_status_timer = lv_timer_create(status_timer_cb, 1000, NULL);

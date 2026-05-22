@@ -4,6 +4,7 @@ set(SRC_FILES
     "light_ctrl.c"
     "light_ui.c"
     "fan_ui.c"
+    "ac_ui.c"
     "machi_images.c"
 
     "app/app_led.c"
@@ -14,6 +15,7 @@ set(SRC_FILES
     "app/app_mqtt.c"
     "app/app_sensor.c"
     "app/fan_ctrl.c"
+    "app/ac_ctrl.c"
 
     "gui/ui_boot_animate.c"
     "gui/ui_sr.c"

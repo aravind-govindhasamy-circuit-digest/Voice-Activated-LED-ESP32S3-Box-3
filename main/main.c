@@ -14,12 +14,14 @@
 #include "bsp_storage.h"
 
 #include "app/fan_ctrl.h"
+#include "app/ac_ctrl.h"
 #include "app_mqtt.h"
 #include "app_sensor.h"
 #include "app_sr.h"
 #include "app_status.h"
 #include "app_wifi.h"
 #include "fan_ui.h"
+#include "ac_ui.h"
 #include "gui/ui_boot_animate.h"
 #include "gui/ui_sr.h"
 #include "light_ctrl.h"
@@ -46,7 +48,7 @@ static void sensor_task(void *arg) {
     // Attempt to read temp/hum
     esp_err_t env_err = app_sensor_get_values(&temp, &hum);
     
-    app_status_update_sensor(temp, hum, presence);
+    app_status_update_sensor(temp, hum, presence, env_err == ESP_OK);
     uint32_t now = xTaskGetTickCount();
 
     // Check for significant changes
@@ -72,7 +74,7 @@ static void sensor_task(void *arg) {
       }
       last_presence = presence;
       last_publish_time = now;
-      app_status_update_sensor(temp, hum, presence);
+      app_status_update_sensor(temp, hum, presence, env_err == ESP_OK);
     }
     
     // Update UI status
@@ -85,6 +87,7 @@ static void after_boot(void) {
   /* Minimal main screen */
   ESP_ERROR_CHECK(light_ui_start());
   ESP_ERROR_CHECK(fan_ui_start());
+  ESP_ERROR_CHECK(ac_ui_start());
   fan_ui_update(fan_ctrl_get_power(), fan_ctrl_get_speed());
   ui_sr_anim_init();
   s_ui_ready = true;
@@ -121,6 +124,7 @@ void app_main(void) {
   ESP_LOGI(TAG, "start light demo UI");
   ESP_ERROR_CHECK(light_ctrl_init());
   ESP_ERROR_CHECK(fan_ctrl_init());
+  ESP_ERROR_CHECK(ac_ctrl_init());
 
   // Sensor initialized later
 

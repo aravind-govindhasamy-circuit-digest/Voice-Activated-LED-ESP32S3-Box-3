@@ -29,11 +29,11 @@ void app_status_update_mqtt(bool connected) {
   s_status.mqtt_connected = connected;
 }
 
-void app_status_update_sensor(float temp, float hum, bool presence) {
+void app_status_update_sensor(float temp, float hum, bool presence, bool sensor_valid) {
   s_status.last_temp = temp;
   s_status.last_hum = hum;
   s_status.last_presence = presence;
-  s_status.sensor_valid = true;
+  s_status.sensor_valid = sensor_valid;
 }
 
 void app_status_note_mqtt_tx(const char *topic, const char *payload) {

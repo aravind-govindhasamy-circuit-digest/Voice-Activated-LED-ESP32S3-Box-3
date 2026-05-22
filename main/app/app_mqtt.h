@@ -39,6 +39,7 @@ esp_err_t app_mqtt_publish_sensor_data(float temp, float hum, bool presence);
  * @return esp_err_t
  */
 esp_err_t app_mqtt_publish_fan_state(bool on, uint8_t speed);
+esp_err_t app_mqtt_publish_ac_state(bool power, uint8_t temp, uint8_t mode);
 
 /**
  * @brief Query current MQTT link status.

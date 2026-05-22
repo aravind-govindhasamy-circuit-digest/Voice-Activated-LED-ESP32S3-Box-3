@@ -12,6 +12,8 @@ extern "C" {
 
 esp_err_t light_ui_start(void);
 void light_ui_set(bool on);
+void light_ui_show_main_screen(void);
+void light_ui_show_status_screen(void);
 
 #ifdef __cplusplus
 }

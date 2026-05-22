@@ -23,6 +23,8 @@
 #include "app_mqtt.h"
 #include "light_ctrl.h"
 #include "light_ui.h"
+#include "ac_ctrl.h"
+#include "ac_ui.h"
 #include "ui_sr.h"
 
 static const char *TAG = "sr_handler";
@@ -348,6 +350,16 @@ void sr_handler_task(void *pvParam) {
       case SR_CMD_LIGHT_OFF:
         (void)light_ctrl_set(false);
         light_ui_set(false);
+        break;
+      case SR_CMD_AC_ON:
+        ac_ctrl_set_power(true);
+        ac_ui_update(ac_ctrl_get_power(), ac_ctrl_get_temp(), ac_ctrl_get_mode());
+        app_mqtt_publish_ac_state(ac_ctrl_get_power(), ac_ctrl_get_temp(), ac_ctrl_get_mode());
+        break;
+      case SR_CMD_AC_OFF:
+        ac_ctrl_set_power(false);
+        ac_ui_update(ac_ctrl_get_power(), ac_ctrl_get_temp(), ac_ctrl_get_mode());
+        app_mqtt_publish_ac_state(ac_ctrl_get_power(), ac_ctrl_get_temp(), ac_ctrl_get_mode());
         break;
       case SR_CMD_JOKE:
         ESP_LOGI(TAG, "Command: TELL ME A JOKE");

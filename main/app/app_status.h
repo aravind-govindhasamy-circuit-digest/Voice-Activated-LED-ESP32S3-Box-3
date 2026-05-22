@@ -20,7 +20,7 @@ typedef struct {
 
 void app_status_update_wifi(const char *ssid, const char *ip, bool connected);
 void app_status_update_mqtt(bool connected);
-void app_status_update_sensor(float temp, float hum, bool presence);
+void app_status_update_sensor(float temp, float hum, bool presence, bool sensor_valid);
 void app_status_note_mqtt_tx(const char *topic, const char *payload);
 void app_status_note_mqtt_rx(const char *topic, const char *payload);
 app_status_t app_status_get(void);

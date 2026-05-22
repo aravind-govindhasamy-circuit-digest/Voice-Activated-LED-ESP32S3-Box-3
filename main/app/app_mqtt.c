@@ -34,6 +34,8 @@
 #include "app_status.h"
 #include "fan_ctrl.h"
 #include "light_ctrl.h"
+#include "ac_ctrl.h"
+#include "ac_ui.h"
 
 static const char *TAG = "app_mqtt";
 
@@ -277,6 +279,36 @@ static void handle_publish(const uint8_t *pkt, int pkt_len)
                 fan_ctrl_set_speed((uint8_t)item->valueint);
             cJSON_Delete(root);
         }
+    } else if (strcmp(cp, "ac_power") == 0 || strcmp(cp, "ac") == 0) {
+        cJSON *root = cJSON_Parse(payload);
+        if (root) {
+            cJSON *item = cJSON_GetObjectItem(root, "value");
+            if (item && cJSON_IsNumber(item)) {
+                ac_ctrl_set_power(item->valueint == 1);
+                ac_ui_update(ac_ctrl_get_power(), ac_ctrl_get_temp(), ac_ctrl_get_mode());
+            }
+            cJSON_Delete(root);
+        }
+    } else if (strcmp(cp, "ac_temp") == 0 || strcmp(cp, "ac_temperature") == 0) {
+        cJSON *root = cJSON_Parse(payload);
+        if (root) {
+            cJSON *item = cJSON_GetObjectItem(root, "value");
+            if (item && cJSON_IsNumber(item)) {
+                ac_ctrl_set_temp((uint8_t)item->valueint);
+                ac_ui_update(ac_ctrl_get_power(), ac_ctrl_get_temp(), ac_ctrl_get_mode());
+            }
+            cJSON_Delete(root);
+        }
+    } else if (strcmp(cp, "ac_mode") == 0) {
+        cJSON *root = cJSON_Parse(payload);
+        if (root) {
+            cJSON *item = cJSON_GetObjectItem(root, "value");
+            if (item && cJSON_IsNumber(item)) {
+                ac_ctrl_set_mode((uint8_t)item->valueint);
+                ac_ui_update(ac_ctrl_get_power(), ac_ctrl_get_temp(), ac_ctrl_get_mode());
+            }
+            cJSON_Delete(root);
+        }
     }
 }
 
@@ -387,6 +419,7 @@ static void mqtt_task(void *arg)
 
         app_mqtt_publish_state(light_ctrl_get());
         app_mqtt_publish_fan_state(fan_ctrl_get_power(), fan_ctrl_get_speed());
+        app_mqtt_publish_ac_state(ac_ctrl_get_power(), ac_ctrl_get_temp(), ac_ctrl_get_mode());
 
         TickType_t last_ping = xTaskGetTickCount();
 
@@ -484,17 +517,24 @@ esp_err_t app_mqtt_publish_sensor_data(float temp, float hum, bool presence)
 
     char payload[256];
 
-    snprintf(payload, sizeof(payload),
-             "{\"value\": %.2f, \"unit\": \"C\"}", temp);
-    app_mqtt_publish("sensor/temperature", payload);
+    if (temp != 0 || hum != 0) {
+        snprintf(payload, sizeof(payload),
+                 "{\"value\": %.2f, \"unit\": \"C\"}", temp);
+        app_mqtt_publish("sensor/temperature", payload);
 
-    snprintf(payload, sizeof(payload),
-             "{\"value\": %.2f, \"unit\": \"%%\"}", hum);
-    app_mqtt_publish("sensor/humidity", payload);
+        snprintf(payload, sizeof(payload),
+                 "{\"value\": %.2f, \"unit\": \"%%\"}", hum);
+        app_mqtt_publish("sensor/humidity", payload);
 
-    snprintf(payload, sizeof(payload),
-             "{\"value\": %d}", presence ? 1 : 0);
-    app_mqtt_publish("sensor/presence", payload);
+        snprintf(payload, sizeof(payload),
+                 "{\"value\": %d}", presence ? 1 : 0);
+        app_mqtt_publish("sensor/presence", payload);
+    }
+
+    // Auto-sync other nodes to dashboard
+    app_mqtt_publish_ac_state(ac_ctrl_get_power(), ac_ctrl_get_temp(), ac_ctrl_get_mode());
+    app_mqtt_publish_state(light_ctrl_get());
+    app_mqtt_publish_fan_state(fan_ctrl_get_power(), fan_ctrl_get_speed());
 
     return ESP_OK;
 }
@@ -505,6 +545,24 @@ esp_err_t app_mqtt_publish_fan_state(bool on, uint8_t speed)
     char payload[64];
     snprintf(payload, sizeof(payload), "{\"value\": %d}", on ? speed : 0);
     return app_mqtt_publish("control/fan/get", payload);
+}
+
+/* ── Publish AC state ────────────────────────────────────────────────────── */
+esp_err_t app_mqtt_publish_ac_state(bool power, uint8_t temp, uint8_t mode)
+{
+    char payload[128];
+    snprintf(payload, sizeof(payload), "{\"value\": %d}", power ? 1 : 0);
+    app_mqtt_publish("control/ac_power/get", payload);
+    app_mqtt_publish("control/ac/get", payload);
+
+    snprintf(payload, sizeof(payload), "{\"value\": %u}", temp);
+    app_mqtt_publish("control/ac_temp/get", payload);
+    app_mqtt_publish("control/ac_temperature/get", payload);
+
+    snprintf(payload, sizeof(payload), "{\"value\": %u}", mode);
+    app_mqtt_publish("control/ac_mode/get", payload);
+
+    return ESP_OK;
 }
 
 esp_err_t app_mqtt_publish_event(const char *key, const char *payload)
